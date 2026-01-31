@@ -1,0 +1,1010 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Finanz Tracker</title>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            margin: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        // Lucide Icons as SVG components
+        const PlusCircle = () => (
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="12" y1="8" x2="12" y2="16"></line>
+                <line x1="8" y1="12" x2="16" y2="12"></line>
+            </svg>
+        );
+
+        const TrendingDown = () => (
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="23 18 13.5 8.5 8.5 13.5 1 6"></polyline>
+                <polyline points="17 18 23 18 23 12"></polyline>
+            </svg>
+        );
+
+        const Receipt = () => (
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1-2-1z"></path>
+                <path d="M16 8h-6a2 2 0 1 0 0 4h4a2 2 0 1 1 0 4H8"></path>
+                <path d="M12 17V7"></path>
+            </svg>
+        );
+
+        const Trash2 = () => (
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="3 6 5 6 21 6"></polyline>
+                <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
+                <line x1="10" y1="11" x2="10" y2="17"></line>
+                <line x1="14" y1="11" x2="14" y2="17"></line>
+            </svg>
+        );
+
+        const Check = () => (
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="20 6 9 17 4 12"></polyline>
+            </svg>
+        );
+
+        const X = () => (
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="18" y1="6" x2="6" y2="18"></line>
+                <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+        );
+
+        const Wallet = () => (
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"></path>
+                <path d="M3 5v14a2 2 0 0 0 2 2h16v-5"></path>
+                <path d="M18 12a2 2 0 0 0 0 4h4v-4Z"></path>
+            </svg>
+        );
+
+        const AlertCircle = () => (
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="12" y1="8" x2="12" y2="12"></line>
+                <line x1="12" y1="16" x2="12.01" y2="16"></line>
+            </svg>
+        );
+
+        // Storage simulation using localStorage
+        const storage = {
+            get: async (key) => {
+                const value = localStorage.getItem(key);
+                if (!value) throw new Error('Key not found');
+                return { value };
+            },
+            set: async (key, value) => {
+                localStorage.setItem(key, value);
+                return { key, value };
+            }
+        };
+
+        function FinanceTracker() {
+            const [view, setView] = useState('dashboard');
+            const [fixedCosts, setFixedCosts] = useState([]);
+            const [expenses, setExpenses] = useState([]);
+            const [income, setIncome] = useState([]);
+            const [categories, setCategories] = useState(['Lebensmittel', 'Transport', 'Unterhaltung']);
+            const [timeframe, setTimeframe] = useState('monthly');
+            const [loading, setLoading] = useState(true);
+
+            useEffect(() => {
+                loadData();
+            }, []);
+
+            const loadData = async () => {
+                try {
+                    const [fixedResult, expensesResult, categoriesResult, incomeResult] = await Promise.all([
+                        storage.get('fixed-costs').catch(() => null),
+                        storage.get('expenses').catch(() => null),
+                        storage.get('categories').catch(() => null),
+                        storage.get('income').catch(() => null)
+                    ]);
+
+                    if (fixedResult?.value) setFixedCosts(JSON.parse(fixedResult.value));
+                    if (expensesResult?.value) setExpenses(JSON.parse(expensesResult.value));
+                    if (categoriesResult?.value) setCategories(JSON.parse(categoriesResult.value));
+                    if (incomeResult?.value) setIncome(JSON.parse(incomeResult.value));
+                } catch (error) {
+                    console.error('Error loading data:', error);
+                } finally {
+                    setLoading(false);
+                }
+            };
+
+            const saveData = async (type, data) => {
+                try {
+                    await storage.set(type, JSON.stringify(data));
+                } catch (error) {
+                    console.error('Error saving data:', error);
+                }
+            };
+
+            const addFixedCost = (cost) => {
+                const updated = [...fixedCosts, { ...cost, id: Date.now() }];
+                setFixedCosts(updated);
+                saveData('fixed-costs', updated);
+            };
+
+            const deleteFixedCost = (id) => {
+                const updated = fixedCosts.filter(c => c.id !== id);
+                setFixedCosts(updated);
+                saveData('fixed-costs', updated);
+            };
+
+            const addExpense = (expense) => {
+                const updated = [...expenses, { ...expense, id: Date.now() }];
+                setExpenses(updated);
+                saveData('expenses', updated);
+            };
+
+            const deleteExpense = (id) => {
+                const updated = expenses.filter(e => e.id !== id);
+                setExpenses(updated);
+                saveData('expenses', updated);
+            };
+
+            const addIncome = (incomeItem) => {
+                const updated = [...income, { ...incomeItem, id: Date.now() }];
+                setIncome(updated);
+                saveData('income', updated);
+            };
+
+            const deleteIncome = (id) => {
+                const updated = income.filter(i => i.id !== id);
+                setIncome(updated);
+                saveData('income', updated);
+            };
+
+            const addCategory = (category) => {
+                const updated = [...categories, category];
+                setCategories(updated);
+                saveData('categories', updated);
+            };
+
+            const calculateTotal = (interval) => {
+                return fixedCosts
+                    .filter(c => c.interval === interval)
+                    .reduce((sum, c) => sum + parseFloat(c.amount), 0);
+            };
+
+            const calculateMonthlyIncome = () => {
+                return income.reduce((sum, i) => {
+                    const amount = parseFloat(i.amount);
+                    if (i.interval === 'monthly') return sum + amount;
+                    if (i.interval === 'yearly') return sum + (amount / 12);
+                    if (i.interval === 'weekly') return sum + (amount * 4.33);
+                    return sum;
+                }, 0);
+            };
+
+            const calculateMonthlyFixedCosts = () => {
+                return fixedCosts.reduce((sum, c) => {
+                    const amount = parseFloat(c.amount);
+                    if (c.interval === 'monthly') return sum + amount;
+                    if (c.interval === 'yearly') return sum + (amount / 12);
+                    if (c.interval === 'weekly') return sum + (amount * 4.33);
+                    return sum;
+                }, 0);
+            };
+
+            const getExpensesInTimeframe = () => {
+                const now = new Date();
+                const filtered = expenses.filter(e => {
+                    const expenseDate = new Date(e.date);
+                    const diffTime = now - expenseDate;
+                    const diffDays = diffTime / (1000 * 60 * 60 * 24);
+                    
+                    if (timeframe === 'weekly') return diffDays <= 7;
+                    if (timeframe === 'monthly') return diffDays <= 30;
+                    if (timeframe === 'yearly') return diffDays <= 365;
+                    return true;
+                });
+                return filtered;
+            };
+
+            const getExpensesByCategory = () => {
+                const timeframeExpenses = getExpensesInTimeframe();
+                const grouped = {};
+                timeframeExpenses.forEach(e => {
+                    grouped[e.category] = (grouped[e.category] || 0) + parseFloat(e.amount);
+                });
+                return grouped;
+            };
+
+            if (loading) {
+                return (
+                    <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+                        <div className="text-gray-400">Laden...</div>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="min-h-screen bg-gray-50">
+                    <nav className="bg-white border-b border-gray-200">
+                        <div className="max-w-5xl mx-auto px-6 py-4">
+                            <div className="flex items-center justify-between">
+                                <h1 className="text-xl font-medium text-gray-900">Finanzen</h1>
+                                <div className="flex gap-1">
+                                    <NavButton active={view === 'dashboard'} onClick={() => setView('dashboard')}>
+                                        Übersicht
+                                    </NavButton>
+                                    <NavButton active={view === 'income'} onClick={() => setView('income')}>
+                                        Einkommen
+                                    </NavButton>
+                                    <NavButton active={view === 'fixed'} onClick={() => setView('fixed')}>
+                                        Fixkosten
+                                    </NavButton>
+                                    <NavButton active={view === 'expenses'} onClick={() => setView('expenses')}>
+                                        Ausgaben
+                                    </NavButton>
+                                </div>
+                            </div>
+                        </div>
+                    </nav>
+
+                    <main className="max-w-5xl mx-auto px-6 py-8">
+                        {view === 'dashboard' && (
+                            <Dashboard 
+                                fixedCosts={fixedCosts}
+                                expenses={expenses}
+                                income={income}
+                                timeframe={timeframe}
+                                setTimeframe={setTimeframe}
+                                calculateTotal={calculateTotal}
+                                calculateMonthlyIncome={calculateMonthlyIncome}
+                                calculateMonthlyFixedCosts={calculateMonthlyFixedCosts}
+                                getExpensesInTimeframe={getExpensesInTimeframe}
+                                getExpensesByCategory={getExpensesByCategory}
+                            />
+                        )}
+                        {view === 'income' && (
+                            <Income 
+                                income={income}
+                                onAdd={addIncome}
+                                onDelete={deleteIncome}
+                                calculateMonthlyIncome={calculateMonthlyIncome}
+                            />
+                        )}
+                        {view === 'fixed' && (
+                            <FixedCosts 
+                                costs={fixedCosts}
+                                onAdd={addFixedCost}
+                                onDelete={deleteFixedCost}
+                                calculateTotal={calculateTotal}
+                            />
+                        )}
+                        {view === 'expenses' && (
+                            <Expenses 
+                                expenses={expenses}
+                                categories={categories}
+                                onAdd={addExpense}
+                                onDelete={deleteExpense}
+                                onAddCategory={addCategory}
+                            />
+                        )}
+                    </main>
+                </div>
+            );
+        }
+
+        function NavButton({ active, onClick, children }) {
+            return (
+                <button
+                    onClick={onClick}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                        active 
+                            ? 'bg-blue-50 text-blue-600' 
+                            : 'text-gray-600 hover:bg-gray-50'
+                    }`}
+                >
+                    {children}
+                </button>
+            );
+        }
+
+        function Dashboard({ fixedCosts, expenses, income, timeframe, setTimeframe, calculateTotal, calculateMonthlyIncome, calculateMonthlyFixedCosts, getExpensesInTimeframe, getExpensesByCategory }) {
+            const timeframeExpenses = getExpensesInTimeframe();
+            const totalExpenses = timeframeExpenses.reduce((sum, e) => sum + parseFloat(e.amount), 0);
+            const byCategory = getExpensesByCategory();
+            
+            // Calculate income, fixed costs, and available budget for selected timeframe
+            const calculateTimeframeIncome = () => {
+                return income.reduce((sum, i) => {
+                    const amount = parseFloat(i.amount);
+                    if (timeframe === 'weekly') {
+                        if (i.interval === 'weekly') return sum + amount;
+                        if (i.interval === 'monthly') return sum + (amount / 4.33);
+                        if (i.interval === 'yearly') return sum + (amount / 52);
+                    } else if (timeframe === 'monthly') {
+                        if (i.interval === 'monthly') return sum + amount;
+                        if (i.interval === 'yearly') return sum + (amount / 12);
+                        if (i.interval === 'weekly') return sum + (amount * 4.33);
+                    } else if (timeframe === 'yearly') {
+                        if (i.interval === 'yearly') return sum + amount;
+                        if (i.interval === 'monthly') return sum + (amount * 12);
+                        if (i.interval === 'weekly') return sum + (amount * 52);
+                    }
+                    return sum;
+                }, 0);
+            };
+            
+            const calculateTimeframeFixedCosts = () => {
+                return fixedCosts.reduce((sum, c) => {
+                    const amount = parseFloat(c.amount);
+                    if (timeframe === 'weekly') {
+                        if (c.interval === 'weekly') return sum + amount;
+                        if (c.interval === 'monthly') return sum + (amount / 4.33);
+                        if (c.interval === 'yearly') return sum + (amount / 52);
+                    } else if (timeframe === 'monthly') {
+                        if (c.interval === 'monthly') return sum + amount;
+                        if (c.interval === 'yearly') return sum + (amount / 12);
+                        if (c.interval === 'weekly') return sum + (amount * 4.33);
+                    } else if (timeframe === 'yearly') {
+                        if (c.interval === 'yearly') return sum + amount;
+                        if (c.interval === 'monthly') return sum + (amount * 12);
+                        if (c.interval === 'weekly') return sum + (amount * 52);
+                    }
+                    return sum;
+                }, 0);
+            };
+            
+            const timeframeIncome = calculateTimeframeIncome();
+            const timeframeFixedCosts = calculateTimeframeFixedCosts();
+            const timeframeAvailable = timeframeIncome - timeframeFixedCosts;
+            const remaining = timeframeAvailable - totalExpenses;
+            const usagePercent = timeframeAvailable > 0 ? (totalExpenses / timeframeAvailable) * 100 : 0;
+
+            const timeframeLabels = {
+                weekly: 'Woche',
+                monthly: 'Monat',
+                yearly: 'Jahr'
+            };
+
+            return (
+                <div className="space-y-8">
+                    <div className="flex items-center justify-between">
+                        <h2 className="text-2xl font-semibold text-gray-900">Übersicht</h2>
+                        <div className="flex gap-2">
+                            {['weekly', 'monthly', 'yearly'].map(tf => (
+                                <button
+                                    key={tf}
+                                    onClick={() => setTimeframe(tf)}
+                                    className={`px-3 py-1.5 rounded-lg text-sm transition-colors ${
+                                        timeframe === tf
+                                            ? 'bg-gray-900 text-white'
+                                            : 'bg-white text-gray-600 hover:bg-gray-100 border border-gray-200'
+                                    }`}
+                                >
+                                    {timeframeLabels[tf]}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* Budget Overview - Finanzguru Style */}
+                    <Card>
+                        <div className="space-y-4">
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <div className="text-sm text-gray-500 mb-1">Frei verfügbar ({timeframeLabels[timeframe]})</div>
+                                    <div className="text-3xl font-semibold text-gray-900">{formatEuro(remaining)}</div>
+                                </div>
+                                {remaining < 0 && (
+                                    <div className="flex items-center gap-2 px-3 py-1.5 bg-red-50 text-red-600 rounded-lg text-sm">
+                                        <AlertCircle />
+                                        Überzogen
+                                    </div>
+                                )}
+                            </div>
+                            
+                            <div className="space-y-2">
+                                <div className="flex justify-between text-sm">
+                                    <span className="text-gray-600">Verbraucht</span>
+                                    <span className="font-medium text-gray-900">{usagePercent.toFixed(0)}%</span>
+                                </div>
+                                <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                                    <div 
+                                        className={`h-full transition-all ${
+                                            usagePercent > 100 ? 'bg-red-500' : 
+                                            usagePercent > 80 ? 'bg-orange-500' : 'bg-green-500'
+                                        }`}
+                                        style={{ width: `${Math.min(usagePercent, 100)}%` }}
+                                    />
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-3 gap-4 pt-2 border-t border-gray-100">
+                                <div>
+                                    <div className="text-xs text-gray-500 mb-1">Einkommen</div>
+                                    <div className="font-medium text-gray-900">{formatEuro(timeframeIncome)}</div>
+                                </div>
+                                <div>
+                                    <div className="text-xs text-gray-500 mb-1">Fixkosten</div>
+                                    <div className="font-medium text-gray-900">-{formatEuro(timeframeFixedCosts)}</div>
+                                </div>
+                                <div>
+                                    <div className="text-xs text-gray-500 mb-1">Ausgaben</div>
+                                    <div className="font-medium text-gray-900">-{formatEuro(totalExpenses)}</div>
+                                </div>
+                            </div>
+                        </div>
+                    </Card>
+
+                    <div className="grid md:grid-cols-2 gap-6">
+                        <Card>
+                            <CardTitle icon={<Receipt />}>Fixkosten ({timeframeLabels[timeframe]})</CardTitle>
+                            <div className="mt-4">
+                                <div className="text-3xl font-semibold text-gray-900">
+                                    {formatEuro(timeframeFixedCosts)}
+                                </div>
+                                <div className="text-sm text-gray-500 mt-1">
+                                    {fixedCosts.length} Positionen
+                                </div>
+                            </div>
+                        </Card>
+
+                        <Card>
+                            <CardTitle icon={<TrendingDown />}>
+                                Ausgaben ({timeframeLabels[timeframe]})
+                            </CardTitle>
+                            <div className="mt-4">
+                                <div className="text-3xl font-semibold text-gray-900">
+                                    {formatEuro(totalExpenses)}
+                                </div>
+                                <div className="text-sm text-gray-500 mt-1">
+                                    {timeframeExpenses.length} Ausgaben
+                                </div>
+                            </div>
+                        </Card>
+                    </div>
+
+                    {Object.keys(byCategory).length > 0 && (
+                        <Card>
+                            <CardTitle>Nach Kategorie</CardTitle>
+                            <div className="space-y-2 mt-4">
+                                {Object.entries(byCategory)
+                                    .sort(([,a], [,b]) => b - a)
+                                    .map(([category, amount]) => {
+                                        const percent = timeframeAvailable > 0 ? (amount / timeframeAvailable) * 100 : 0;
+                                        return (
+                                            <div key={category} className="space-y-1">
+                                                <div className="flex justify-between items-center">
+                                                    <span className="text-gray-700">{category}</span>
+                                                    <div className="flex items-center gap-3">
+                                                        <span className="text-sm text-gray-500">{percent.toFixed(0)}%</span>
+                                                        <span className="font-medium text-gray-900 w-20 text-right">{formatEuro(amount)}</span>
+                                                    </div>
+                                                </div>
+                                                <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                                                    <div 
+                                                        className="h-full bg-blue-500"
+                                                        style={{ width: `${Math.min(percent, 100)}%` }}
+                                                    />
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                            </div>
+                        </Card>
+                    )}
+                </div>
+            );
+        }
+
+        function Income({ income, onAdd, onDelete, calculateMonthlyIncome }) {
+            const [showForm, setShowForm] = useState(false);
+            const [formData, setFormData] = useState({
+                name: '',
+                amount: '',
+                interval: 'monthly'
+            });
+
+            const handleSubmit = (e) => {
+                e.preventDefault();
+                if (formData.name && formData.amount) {
+                    onAdd(formData);
+                    setFormData({ name: '', amount: '', interval: 'monthly' });
+                    setShowForm(false);
+                }
+            };
+
+            const intervalLabels = {
+                weekly: 'Wöchentlich',
+                monthly: 'Monatlich',
+                yearly: 'Jährlich'
+            };
+
+            return (
+                <div className="space-y-6">
+                    <div className="flex items-center justify-between">
+                        <h2 className="text-2xl font-semibold text-gray-900">Einkommen</h2>
+                        <button
+                            onClick={() => setShowForm(!showForm)}
+                            className="flex items-center gap-2 px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-colors"
+                        >
+                            <PlusCircle />
+                            Hinzufügen
+                        </button>
+                    </div>
+
+                    {showForm && (
+                        <Card>
+                            <form onSubmit={handleSubmit} className="space-y-4">
+                                <Input
+                                    label="Bezeichnung"
+                                    value={formData.name}
+                                    onChange={(e) => setFormData({...formData, name: e.target.value})}
+                                    placeholder="z.B. Gehalt, Nebenjob, Mieteinnahmen"
+                                />
+                                <Input
+                                    label="Betrag (€)"
+                                    type="number"
+                                    step="0.01"
+                                    value={formData.amount}
+                                    onChange={(e) => setFormData({...formData, amount: e.target.value})}
+                                    placeholder="0.00"
+                                />
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                                        Intervall
+                                    </label>
+                                    <select
+                                        value={formData.interval}
+                                        onChange={(e) => setFormData({...formData, interval: e.target.value})}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                    >
+                                        <option value="weekly">Wöchentlich</option>
+                                        <option value="monthly">Monatlich</option>
+                                        <option value="yearly">Jährlich</option>
+                                    </select>
+                                </div>
+                                <div className="flex gap-2">
+                                    <button
+                                        type="submit"
+                                        className="flex-1 px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-colors"
+                                    >
+                                        Speichern
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowForm(false)}
+                                        className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+                                    >
+                                        Abbrechen
+                                    </button>
+                                </div>
+                            </form>
+                        </Card>
+                    )}
+
+                    <Card>
+                        <div className="flex items-center gap-2 text-gray-600 mb-2">
+                            <Wallet />
+                            <span className="text-sm font-medium">Monatliches Gesamteinkommen</span>
+                        </div>
+                        <div className="text-3xl font-semibold text-gray-900">
+                            {formatEuro(calculateMonthlyIncome())}
+                        </div>
+                    </Card>
+
+                    <div className="space-y-2">
+                        {income.length === 0 ? (
+                            <div className="text-center py-12 text-gray-400">
+                                Noch kein Einkommen erfasst
+                            </div>
+                        ) : (
+                            income.map(item => (
+                                <div
+                                    key={item.id}
+                                    className="bg-white rounded-lg px-4 py-3 flex items-center justify-between hover:shadow-sm transition-shadow border border-gray-100"
+                                >
+                                    <div className="flex-1">
+                                        <div className="font-medium text-gray-900">{item.name}</div>
+                                        <div className="text-sm text-gray-500">{intervalLabels[item.interval]}</div>
+                                    </div>
+                                    <div className="flex items-center gap-4">
+                                        <div className="font-semibold text-green-600">{formatEuro(item.amount)}</div>
+                                        <button
+                                            onClick={() => onDelete(item.id)}
+                                            className="text-gray-400 hover:text-red-500 transition-colors"
+                                        >
+                                            <Trash2 />
+                                        </button>
+                                    </div>
+                                </div>
+                            ))
+                        )}
+                    </div>
+                </div>
+            );
+        }
+
+        function FixedCosts({ costs, onAdd, onDelete, calculateTotal }) {
+            const [showForm, setShowForm] = useState(false);
+            const [formData, setFormData] = useState({
+                name: '',
+                amount: '',
+                interval: 'monthly'
+            });
+
+            const handleSubmit = (e) => {
+                e.preventDefault();
+                if (formData.name && formData.amount) {
+                    onAdd(formData);
+                    setFormData({ name: '', amount: '', interval: 'monthly' });
+                    setShowForm(false);
+                }
+            };
+
+            const intervalLabels = {
+                weekly: 'Wöchentlich',
+                monthly: 'Monatlich',
+                yearly: 'Jährlich'
+            };
+
+            return (
+                <div className="space-y-6">
+                    <div className="flex items-center justify-between">
+                        <h2 className="text-2xl font-semibold text-gray-900">Fixkosten</h2>
+                        <button
+                            onClick={() => setShowForm(!showForm)}
+                            className="flex items-center gap-2 px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-colors"
+                        >
+                            <PlusCircle />
+                            Hinzufügen
+                        </button>
+                    </div>
+
+                    {showForm && (
+                        <Card>
+                            <form onSubmit={handleSubmit} className="space-y-4">
+                                <Input
+                                    label="Name"
+                                    value={formData.name}
+                                    onChange={(e) => setFormData({...formData, name: e.target.value})}
+                                    placeholder="z.B. Miete, Netflix, Fitnessstudio"
+                                />
+                                <Input
+                                    label="Betrag (€)"
+                                    type="number"
+                                    step="0.01"
+                                    value={formData.amount}
+                                    onChange={(e) => setFormData({...formData, amount: e.target.value})}
+                                    placeholder="0.00"
+                                />
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                                        Intervall
+                                    </label>
+                                    <select
+                                        value={formData.interval}
+                                        onChange={(e) => setFormData({...formData, interval: e.target.value})}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                    >
+                                        <option value="weekly">Wöchentlich</option>
+                                        <option value="monthly">Monatlich</option>
+                                        <option value="yearly">Jährlich</option>
+                                    </select>
+                                </div>
+                                <div className="flex gap-2">
+                                    <button
+                                        type="submit"
+                                        className="flex-1 px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-colors"
+                                    >
+                                        Speichern
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowForm(false)}
+                                        className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+                                    >
+                                        Abbrechen
+                                    </button>
+                                </div>
+                            </form>
+                        </Card>
+                    )}
+
+                    <div className="grid md:grid-cols-3 gap-4 mb-6">
+                        <StatCard label="Wöchentlich" amount={calculateTotal('weekly')} />
+                        <StatCard label="Monatlich" amount={calculateTotal('monthly')} />
+                        <StatCard label="Jährlich" amount={calculateTotal('yearly')} />
+                    </div>
+
+                    <div className="space-y-2">
+                        {costs.length === 0 ? (
+                            <div className="text-center py-12 text-gray-400">
+                                Noch keine Fixkosten erfasst
+                            </div>
+                        ) : (
+                            costs.map(cost => (
+                                <div
+                                    key={cost.id}
+                                    className="bg-white rounded-lg px-4 py-3 flex items-center justify-between hover:shadow-sm transition-shadow border border-gray-100"
+                                >
+                                    <div className="flex-1">
+                                        <div className="font-medium text-gray-900">{cost.name}</div>
+                                        <div className="text-sm text-gray-500">{intervalLabels[cost.interval]}</div>
+                                    </div>
+                                    <div className="flex items-center gap-4">
+                                        <div className="font-semibold text-gray-900">{formatEuro(cost.amount)}</div>
+                                        <button
+                                            onClick={() => onDelete(cost.id)}
+                                            className="text-gray-400 hover:text-red-500 transition-colors"
+                                        >
+                                            <Trash2 />
+                                        </button>
+                                    </div>
+                                </div>
+                            ))
+                        )}
+                    </div>
+                </div>
+            );
+        }
+
+        function Expenses({ expenses, categories, onAdd, onDelete, onAddCategory }) {
+            const [showForm, setShowForm] = useState(false);
+            const [showCategoryForm, setShowCategoryForm] = useState(false);
+            const [newCategory, setNewCategory] = useState('');
+            const [formData, setFormData] = useState({
+                description: '',
+                amount: '',
+                category: categories[0] || '',
+                date: new Date().toISOString().split('T')[0]
+            });
+
+            const handleSubmit = (e) => {
+                e.preventDefault();
+                if (formData.description && formData.amount && formData.category) {
+                    onAdd(formData);
+                    setFormData({
+                        description: '',
+                        amount: '',
+                        category: categories[0] || '',
+                        date: new Date().toISOString().split('T')[0]
+                    });
+                    setShowForm(false);
+                }
+            };
+
+            const handleAddCategory = (e) => {
+                e.preventDefault();
+                if (newCategory && !categories.includes(newCategory)) {
+                    onAddCategory(newCategory);
+                    setFormData({...formData, category: newCategory});
+                    setNewCategory('');
+                    setShowCategoryForm(false);
+                }
+            };
+
+            const sortedExpenses = [...expenses].sort((a, b) => new Date(b.date) - new Date(a.date));
+
+            return (
+                <div className="space-y-6">
+                    <div className="flex items-center justify-between">
+                        <h2 className="text-2xl font-semibold text-gray-900">Ausgaben</h2>
+                        <button
+                            onClick={() => setShowForm(!showForm)}
+                            className="flex items-center gap-2 px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-colors"
+                        >
+                            <PlusCircle />
+                            Hinzufügen
+                        </button>
+                    </div>
+
+                    {showForm && (
+                        <Card>
+                            <form onSubmit={handleSubmit} className="space-y-4">
+                                <Input
+                                    label="Beschreibung"
+                                    value={formData.description}
+                                    onChange={(e) => setFormData({...formData, description: e.target.value})}
+                                    placeholder="z.B. Einkauf Rewe"
+                                />
+                                <Input
+                                    label="Betrag (€)"
+                                    type="number"
+                                    step="0.01"
+                                    value={formData.amount}
+                                    onChange={(e) => setFormData({...formData, amount: e.target.value})}
+                                    placeholder="0.00"
+                                />
+                                <div>
+                                    <div className="flex items-center justify-between mb-2">
+                                        <label className="block text-sm font-medium text-gray-700">
+                                            Kategorie
+                                        </label>
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowCategoryForm(!showCategoryForm)}
+                                            className="text-sm text-blue-600 hover:text-blue-700"
+                                        >
+                                            + Neue Kategorie
+                                        </button>
+                                    </div>
+                                    {showCategoryForm && (
+                                        <div className="mb-3 flex gap-2">
+                                            <input
+                                                type="text"
+                                                value={newCategory}
+                                                onChange={(e) => setNewCategory(e.target.value)}
+                                                placeholder="Kategoriename"
+                                                className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                            />
+                                            <button
+                                                type="button"
+                                                onClick={handleAddCategory}
+                                                className="px-3 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800"
+                                            >
+                                                <Check />
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    setShowCategoryForm(false);
+                                                    setNewCategory('');
+                                                }}
+                                                className="px-3 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
+                                            >
+                                                <X />
+                                            </button>
+                                        </div>
+                                    )}
+                                    <select
+                                        value={formData.category}
+                                        onChange={(e) => setFormData({...formData, category: e.target.value})}
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                                    >
+                                        {categories.map(cat => (
+                                            <option key={cat} value={cat}>{cat}</option>
+                                        ))}
+                                    </select>
+                                </div>
+                                <Input
+                                    label="Datum"
+                                    type="date"
+                                    value={formData.date}
+                                    onChange={(e) => setFormData({...formData, date: e.target.value})}
+                                />
+                                <div className="flex gap-2">
+                                    <button
+                                        type="submit"
+                                        className="flex-1 px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800 transition-colors"
+                                    >
+                                        Speichern
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowForm(false)}
+                                        className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+                                    >
+                                        Abbrechen
+                                    </button>
+                                </div>
+                            </form>
+                        </Card>
+                    )}
+
+                    <div className="space-y-2">
+                        {sortedExpenses.length === 0 ? (
+                            <div className="text-center py-12 text-gray-400">
+                                Noch keine Ausgaben erfasst
+                            </div>
+                        ) : (
+                            sortedExpenses.map(expense => (
+                                <div
+                                    key={expense.id}
+                                    className="bg-white rounded-lg px-4 py-3 flex items-center justify-between hover:shadow-sm transition-shadow border border-gray-100"
+                                >
+                                    <div className="flex-1">
+                                        <div className="font-medium text-gray-900">{expense.description}</div>
+                                        <div className="text-sm text-gray-500">
+                                            {expense.category} · {formatDate(expense.date)}
+                                        </div>
+                                    </div>
+                                    <div className="flex items-center gap-4">
+                                        <div className="font-semibold text-gray-900">{formatEuro(expense.amount)}</div>
+                                        <button
+                                            onClick={() => onDelete(expense.id)}
+                                            className="text-gray-400 hover:text-red-500 transition-colors"
+                                        >
+                                            <Trash2 />
+                                        </button>
+                                    </div>
+                                </div>
+                            ))
+                        )}
+                    </div>
+                </div>
+            );
+        }
+
+        function Card({ children }) {
+            return (
+                <div className="bg-white rounded-xl p-6 border border-gray-100 shadow-sm">
+                    {children}
+                </div>
+            );
+        }
+
+        function CardTitle({ icon, children }) {
+            return (
+                <div className="flex items-center gap-2 text-gray-900 font-medium">
+                    {icon && <span className="text-gray-400">{icon}</span>}
+                    {children}
+                </div>
+            );
+        }
+
+        function CostRow({ label, amount }) {
+            return (
+                <div className="flex justify-between items-center">
+                    <span className="text-gray-600">{label}</span>
+                    <span className="font-semibold text-gray-900">{formatEuro(amount)}</span>
+                </div>
+            );
+        }
+
+        function StatCard({ label, amount }) {
+            return (
+                <div className="bg-white rounded-lg p-4 border border-gray-100">
+                    <div className="text-sm text-gray-500 mb-1">{label}</div>
+                    <div className="text-2xl font-semibold text-gray-900">{formatEuro(amount)}</div>
+                </div>
+            );
+        }
+
+        function Input({ label, ...props }) {
+            return (
+                <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                        {label}
+                    </label>
+                    <input
+                        {...props}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                    />
+                </div>
+            );
+        }
+
+        function formatEuro(amount) {
+            return new Intl.NumberFormat('de-DE', {
+                style: 'currency',
+                currency: 'EUR'
+            }).format(amount);
+        }
+
+        function formatDate(dateString) {
+            return new Date(dateString).toLocaleDateString('de-DE', {
+                day: '2-digit',
+                month: '2-digit',
+                year: 'numeric'
+            });
+        }
+
+        // Render the app
+        ReactDOM.render(<FinanceTracker />, document.getElementById('root'));
+    </script>
+</body>
+</html>
