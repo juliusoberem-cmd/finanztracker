@@ -8,6 +8,10 @@
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+    <script>
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+    </script>
     <style>
         body {
             margin: 0;
@@ -116,6 +120,10 @@
         const DollarSign = () => (<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>);
         const FileText = () => (<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>);
         const ShoppingCart = () => (<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/><path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/></svg>);
+        const Upload = () => (<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>);
+        const Download = () => (<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>);
+        const FileUp = () => (<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/><polyline points="9 15 12 12 15 15"/></svg>);
+        const ListIcon = () => (<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>);
 
         // ─── Helpers ─────────────────────────────────────────────────────────
         const LABELS = { weekly: 'Woche', monthly: 'Monat', yearly: 'Jahr' };
@@ -163,6 +171,436 @@
 
         function formatDate(d) {
             return new Date(d).toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: 'numeric' });
+        }
+
+        // ─── C24 PDF Parser ───────────────────────────────────────────────────
+        async function parseC24PDF(arrayBuffer) {
+            try {
+                const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+
+                // Extract year from document (from header like "Kontoauszug 01/2026")
+                let documentYear = new Date().getFullYear();
+
+                // Get all text items with positions for better parsing
+                let allItems = [];
+
+                for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
+                    const page = await pdf.getPage(pageNum);
+                    const textContent = await page.getTextContent();
+
+                    // Check for year in header
+                    const pageText = textContent.items.map(item => item.str).join(' ');
+                    const yearMatch = pageText.match(/Kontoauszug\s+\d{2}\/(\d{4})/);
+                    if (yearMatch) {
+                        documentYear = parseInt(yearMatch[1]);
+                    }
+
+                    // Store items with their positions
+                    textContent.items.forEach(item => {
+                        if (item.str.trim()) {
+                            allItems.push({
+                                text: item.str.trim(),
+                                x: Math.round(item.transform[4]),
+                                y: Math.round(item.transform[5]),
+                                page: pageNum
+                            });
+                        }
+                    });
+                }
+
+                // Sort by page, then by Y (descending - top to bottom), then by X
+                allItems.sort((a, b) => {
+                    if (a.page !== b.page) return a.page - b.page;
+                    if (Math.abs(a.y - b.y) > 5) return b.y - a.y; // Different lines
+                    return a.x - b.x; // Same line, left to right
+                });
+
+                // Group items by lines (items with similar Y positions)
+                const lines = [];
+                let currentLine = [];
+                let lastY = null;
+                let lastPage = null;
+
+                allItems.forEach(item => {
+                    if (lastY === null || lastPage !== item.page || Math.abs(item.y - lastY) > 5) {
+                        if (currentLine.length > 0) {
+                            lines.push({ items: currentLine, y: lastY, page: lastPage });
+                        }
+                        currentLine = [item];
+                        lastY = item.y;
+                        lastPage = item.page;
+                    } else {
+                        currentLine.push(item);
+                    }
+                });
+                if (currentLine.length > 0) {
+                    lines.push({ items: currentLine, y: lastY, page: lastPage });
+                }
+
+                // Parse transactions from lines
+                // C24 Format: Buchung | Valuta | Transaktionsinformation | Betrag
+                // Date format: DD.MM. (without year)
+                // Amount format: + 1.000,00 € or - 500,00 €
+
+                const transactions = [];
+                let currentTransaction = null;
+
+                // Patterns
+                const datePattern = /^(\d{2})\.(\d{2})\.$/;
+                const amountPattern = /^([+-])\s*([\d.]+,\d{2})\s*€$/;
+
+                for (let i = 0; i < lines.length; i++) {
+                    const line = lines[i];
+                    const lineText = line.items.map(it => it.text).join(' ');
+
+                    // Skip header/footer lines
+                    if (lineText.includes('Buchung') && lineText.includes('Valuta') && lineText.includes('Betrag')) continue;
+                    if (lineText.includes('IBAN:') && lineText.includes('BIC:') && !lineText.match(/[+-]\s*[\d.]+,\d{2}\s*€/)) continue;
+                    if (lineText.includes('C24 Bank GmbH')) continue;
+                    if (lineText.includes('Seite') && lineText.includes('von')) continue;
+                    if (lineText.includes('Kontoauszug') && lineText.includes('/')) continue;
+                    if (lineText.includes('Transaktionsübersicht')) continue;
+                    if (lineText.includes('Kontostand') && !lineText.match(/[+-]\s*[\d.]+,\d{2}\s*€/)) continue;
+                    if (lineText.includes('Dispokredit')) continue;
+                    if (lineText.includes('Zusammenfassung')) continue;
+                    if (lineText.includes('Startsaldo')) continue;
+                    if (lineText.includes('Endsaldo')) continue;
+                    if (lineText.includes('Kontobelastungen')) continue;
+                    if (lineText.includes('Kontogutschriften')) continue;
+                    if (lineText.includes('Weitere Informationen')) continue;
+                    if (lineText.includes('Einwendungen gegen')) continue;
+                    if (lineText.includes('Hinweis zur')) continue;
+                    if (lineText.includes('C24 Smartkonto')) continue;
+                    if (lineText.match(/^Girokonto$/)) continue;
+                    if (lineText.includes('Ust.-ID')) continue;
+                    if (lineText.includes('Neue Mainzer')) continue;
+
+                    // Check if line starts with a date (DD.MM.)
+                    const firstItem = line.items[0];
+                    const dateMatch = firstItem?.text.match(datePattern);
+
+                    if (dateMatch) {
+                        // Save previous transaction
+                        if (currentTransaction && currentTransaction.amount !== null) {
+                            transactions.push(currentTransaction);
+                        }
+
+                        // Start new transaction
+                        const day = dateMatch[1];
+                        const month = dateMatch[2];
+                        const dateStr = `${documentYear}-${month}-${day}`;
+
+                        currentTransaction = {
+                            date: dateStr,
+                            description: '',
+                            descriptionParts: [],
+                            amount: null,
+                            type: null,
+                            category: null
+                        };
+
+                        // Parse rest of line - look for transaction type and amount
+                        // Items are sorted by X position
+                        let foundAmount = false;
+                        let skipNextDate = false;
+
+                        for (let j = 1; j < line.items.length; j++) {
+                            const item = line.items[j];
+
+                            // Skip valuta date (second date column)
+                            if (item.text.match(datePattern)) {
+                                skipNextDate = true;
+                                continue;
+                            }
+
+                            // Check for amount (usually at the end, rightmost)
+                            const amountMatch = item.text.match(amountPattern);
+                            if (amountMatch) {
+                                const sign = amountMatch[1];
+                                let amountStr = amountMatch[2].replace(/\./g, '').replace(',', '.');
+                                const amount = parseFloat(amountStr);
+                                currentTransaction.amount = amount;
+                                currentTransaction.type = sign === '+' ? 'income' : 'expense';
+                                foundAmount = true;
+                            } else if (!foundAmount) {
+                                // This is part of the description
+                                currentTransaction.descriptionParts.push(item.text);
+                            }
+                        }
+                    } else if (currentTransaction && currentTransaction.amount !== null) {
+                        // Continuation of current transaction description
+                        // Skip IBAN/BIC lines for description but still collect other details
+                        const isIbanLine = lineText.includes('IBAN:');
+
+                        if (!isIbanLine) {
+                            // Add to description
+                            line.items.forEach(item => {
+                                // Skip amounts and dates
+                                if (!item.text.match(amountPattern) && !item.text.match(datePattern)) {
+                                    currentTransaction.descriptionParts.push(item.text);
+                                }
+                            });
+                        }
+                    }
+                }
+
+                // Don't forget the last transaction
+                if (currentTransaction && currentTransaction.amount !== null) {
+                    transactions.push(currentTransaction);
+                }
+
+                // Process descriptions
+                transactions.forEach(t => {
+                    // Combine description parts
+                    let desc = t.descriptionParts.join(' ').trim();
+
+                    // Clean up common patterns
+                    desc = desc.replace(/\s+/g, ' ');
+
+                    t.description = desc || 'Transaktion';
+                    delete t.descriptionParts;
+                });
+
+                if (transactions.length === 0) {
+                    return {
+                        transactions: [],
+                        error: 'Keine Transaktionen gefunden. Bitte stelle sicher, dass es sich um einen C24 Kontoauszug handelt.',
+                        rawText: lines.slice(0, 50).map(l => l.items.map(i => i.text).join(' ')).join('\n')
+                    };
+                }
+
+                // Sort by date (newest first)
+                transactions.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+                return {
+                    transactions,
+                    stats: {
+                        total: transactions.length,
+                        income: transactions.filter(t => t.type === 'income').length,
+                        expenses: transactions.filter(t => t.type === 'expense').length,
+                        totalIncome: transactions.filter(t => t.type === 'income').reduce((s, t) => s + t.amount, 0),
+                        totalExpenses: transactions.filter(t => t.type === 'expense').reduce((s, t) => s + t.amount, 0)
+                    }
+                };
+            } catch (e) {
+                console.error('PDF parsing error:', e);
+                return {
+                    transactions: [],
+                    error: 'Fehler beim Lesen der PDF: ' + e.message
+                };
+            }
+        }
+
+        // Kategorie-Erkennung basierend auf Beschreibung
+        function detectCategory(description, existingCategories) {
+            const desc = description.toLowerCase();
+
+            const categoryPatterns = {
+                'Lebensmittel': ['rewe', 'edeka', 'aldi', 'lidl', 'penny', 'netto', 'kaufland', 'supermarkt', 'dm-drogerie', 'rossmann'],
+                'Transport': ['db ', 'deutsche bahn', 'shell', 'aral', 'jet ', 'total ', 'esso', 'tankstelle', 'uber', 'taxi', 'flixbus', 'tier', 'lime', 'car2go', 'share now'],
+                'Unterhaltung': ['netflix', 'spotify', 'amazon prime', 'disney', 'kino', 'cinema', 'concert', 'konzert', 'theater'],
+                'Restaurant': ['restaurant', 'cafe', 'lieferando', 'lieferheld', 'uber eats', 'mcdonalds', 'burger king', 'subway', 'pizza', 'sushi'],
+                'Gesundheit': ['apotheke', 'arzt', 'doctor', 'pharmacy', 'krankenhaus', 'hospital', 'optiker'],
+                'Shopping': ['amazon', 'zalando', 'h&m', 'zara', 'mediamarkt', 'saturn', 'ikea', 'ebay'],
+                'Wohnen': ['miete', 'strom', 'gas', 'wasser', 'heizung', 'versicherung', 'gez', 'rundfunk'],
+                'Kommunikation': ['telekom', 'vodafone', 'o2', 'telefon', 'internet', 'mobilfunk'],
+                'Gehalt': ['gehalt', 'lohn', 'salary', 'vergütung', 'auszahlung'],
+                'Überweisung': ['überweisung', 'transfer']
+            };
+
+            for (const [category, keywords] of Object.entries(categoryPatterns)) {
+                if (keywords.some(keyword => desc.includes(keyword))) {
+                    // Return existing category if it matches, otherwise return detected
+                    const existing = existingCategories.find(c => c.toLowerCase() === category.toLowerCase());
+                    return existing || category;
+                }
+            }
+
+            return null;
+        }
+
+        // Erkennt ob eine Transaktion ein Gehalt/regelmäßiges Einkommen ist
+        function detectIncome(description, amount) {
+            const desc = description.toLowerCase();
+
+            // Gehalt/Lohn Patterns
+            const salaryPatterns = [
+                { patterns: ['lohn/gehalt', 'lohn / gehalt', 'gehalt/', 'lohn/', 'gehaltseingang'], name: 'Gehalt', type: 'salary' },
+                { patterns: ['gehalt', 'salary', 'vergütung', 'entgelt', 'bezüge'], name: 'Gehalt', type: 'salary' },
+                { patterns: ['lohn'], name: 'Lohn', type: 'salary' },
+            ];
+
+            // Rente/Pension
+            const pensionPatterns = [
+                { patterns: ['rente', 'pension', 'altersrente', 'erwerbsminderung'], name: 'Rente', type: 'pension' },
+                { patterns: ['deutsche rentenversicherung', 'drv '], name: 'Rente', type: 'pension' },
+            ];
+
+            // Staatliche Leistungen
+            const benefitPatterns = [
+                { patterns: ['kindergeld'], name: 'Kindergeld', type: 'benefit' },
+                { patterns: ['arbeitslosengeld', 'alg ', 'alg1', 'alg2', 'bürgergeld'], name: 'Arbeitslosengeld', type: 'benefit' },
+                { patterns: ['wohngeld'], name: 'Wohngeld', type: 'benefit' },
+                { patterns: ['elterngeld'], name: 'Elterngeld', type: 'benefit' },
+                { patterns: ['bafög', 'bafoeg'], name: 'BAföG', type: 'benefit' },
+            ];
+
+            // Mieteinnahmen
+            const rentalPatterns = [
+                { patterns: ['mieteinnahme', 'miete von', 'mieteingang'], name: 'Mieteinnahmen', type: 'rental' },
+            ];
+
+            // Dividenden/Kapitalerträge
+            const investmentPatterns = [
+                { patterns: ['dividende', 'ausschüttung', 'kapitalertrag', 'zinsgutschrift'], name: 'Kapitalerträge', type: 'investment' },
+            ];
+
+            const allPatterns = [
+                ...salaryPatterns,
+                ...pensionPatterns,
+                ...benefitPatterns,
+                ...rentalPatterns,
+                ...investmentPatterns
+            ];
+
+            for (const pattern of allPatterns) {
+                if (pattern.patterns.some(p => desc.includes(p))) {
+                    return {
+                        name: pattern.name,
+                        type: pattern.type,
+                        interval: 'monthly',
+                        isIncome: true
+                    };
+                }
+            }
+
+            // Heuristik: Größere Überweisungseingänge könnten Gehalt sein
+            // Aber nur wenn es eine Überweisung ist und der Betrag typisch für Gehalt ist
+            if (desc.includes('überweisung') && amount >= 500 && amount <= 15000) {
+                // Prüfe ob es von einer Firma kommt (nicht von Privatperson)
+                const companyIndicators = ['gmbh', 'ag', 'kg', 'ohg', 'ug', 'inc', 'ltd', 'corp', 'co.'];
+                if (companyIndicators.some(ind => desc.includes(ind))) {
+                    return {
+                        name: 'Mögliches Gehalt',
+                        type: 'salary',
+                        interval: 'monthly',
+                        isIncome: true,
+                        uncertain: true
+                    };
+                }
+            }
+
+            return null;
+        }
+
+        // Erkennt ob eine Transaktion ein Vertrag/Abo ist
+        function detectContract(description) {
+            const desc = description.toLowerCase();
+
+            // Bekannte Vertragsanbieter mit Namen und Intervall
+            const contractPatterns = [
+                // Telekommunikation
+                { patterns: ['vodafone', 'vodafone west'], name: 'Vodafone', interval: 'monthly', category: 'Kommunikation' },
+                { patterns: ['telekom', 't-mobile', 'congstar'], name: 'Telekom', interval: 'monthly', category: 'Kommunikation' },
+                { patterns: ['o2', 'telefonica'], name: 'O2', interval: 'monthly', category: 'Kommunikation' },
+                { patterns: ['1&1', '1+1 telecom', '1und1'], name: '1&1', interval: 'monthly', category: 'Kommunikation' },
+                { patterns: ['drillisch'], name: 'Drillisch', interval: 'monthly', category: 'Kommunikation' },
+
+                // Streaming & Entertainment
+                { patterns: ['netflix'], name: 'Netflix', interval: 'monthly', category: 'Unterhaltung' },
+                { patterns: ['spotify'], name: 'Spotify', interval: 'monthly', category: 'Unterhaltung' },
+                { patterns: ['disney+', 'disney plus'], name: 'Disney+', interval: 'monthly', category: 'Unterhaltung' },
+                { patterns: ['amazon prime', 'amzn prime'], name: 'Amazon Prime', interval: 'monthly', category: 'Unterhaltung' },
+                { patterns: ['youtube premium', 'google youtube'], name: 'YouTube Premium', interval: 'monthly', category: 'Unterhaltung' },
+                { patterns: ['audible'], name: 'Audible', interval: 'monthly', category: 'Unterhaltung' },
+                { patterns: ['dazn'], name: 'DAZN', interval: 'monthly', category: 'Unterhaltung' },
+                { patterns: ['sky deutschland', 'sky abo'], name: 'Sky', interval: 'monthly', category: 'Unterhaltung' },
+                { patterns: ['wow ', 'wowapp'], name: 'WOW', interval: 'monthly', category: 'Unterhaltung' },
+
+                // Fitness & Sport
+                { patterns: ['urban sports', 'urbansports'], name: 'Urban Sports Club', interval: 'monthly', category: 'Sport' },
+                { patterns: ['mcfit', 'mc fit', 'rsg group'], name: 'McFit', interval: 'monthly', category: 'Sport' },
+                { patterns: ['fitness first'], name: 'Fitness First', interval: 'monthly', category: 'Sport' },
+                { patterns: ['clever fit', 'cleverfit'], name: 'Clever Fit', interval: 'monthly', category: 'Sport' },
+                { patterns: ['gym'], name: 'Fitnessstudio', interval: 'monthly', category: 'Sport' },
+
+                // Versicherungen
+                { patterns: ['haftpflicht'], name: 'Haftpflichtversicherung', interval: 'yearly', category: 'Versicherung' },
+                { patterns: ['hausrat'], name: 'Hausratversicherung', interval: 'yearly', category: 'Versicherung' },
+                { patterns: ['krankenversicherung', 'krankenkasse', 'aok', 'tk ', 'techniker krankenkasse', 'barmer', 'dak'], name: 'Krankenversicherung', interval: 'monthly', category: 'Versicherung' },
+                { patterns: ['kfz-versicherung', 'autoversicherung', 'huk24', 'huk-coburg', 'allianz kfz'], name: 'KFZ-Versicherung', interval: 'yearly', category: 'Versicherung' },
+                { patterns: ['rechtsschutz'], name: 'Rechtsschutzversicherung', interval: 'yearly', category: 'Versicherung' },
+                { patterns: ['germanbroker', 'german broker'], name: 'Versicherung', interval: 'yearly', category: 'Versicherung' },
+
+                // Energie & Wohnen
+                { patterns: ['e.on', 'eon ', 'eon energie'], name: 'E.ON Strom', interval: 'monthly', category: 'Wohnen' },
+                { patterns: ['vattenfall'], name: 'Vattenfall', interval: 'monthly', category: 'Wohnen' },
+                { patterns: ['enercity'], name: 'enercity', interval: 'monthly', category: 'Wohnen' },
+                { patterns: ['stadtwerke'], name: 'Stadtwerke', interval: 'monthly', category: 'Wohnen' },
+                { patterns: ['miete'], name: 'Miete', interval: 'monthly', category: 'Wohnen' },
+                { patterns: ['gez', 'rundfunk', 'ard zdf'], name: 'Rundfunkbeitrag', interval: 'quarterly', category: 'Wohnen' },
+
+                // Finanzen & Sparen (Sparpläne)
+                { patterns: ['scalable capital', 'scalable broker'], name: 'Scalable Capital Sparplan', interval: 'monthly', category: 'Sparen', isSavingsPlan: true },
+                { patterns: ['trade republic'], name: 'Trade Republic Sparplan', interval: 'monthly', category: 'Sparen', isSavingsPlan: true },
+                { patterns: ['comdirect sparplan'], name: 'Comdirect Sparplan', interval: 'monthly', category: 'Sparen', isSavingsPlan: true },
+                { patterns: ['dkb sparplan'], name: 'DKB Sparplan', interval: 'monthly', category: 'Sparen', isSavingsPlan: true },
+                { patterns: ['ing sparplan', 'ing-diba sparplan'], name: 'ING Sparplan', interval: 'monthly', category: 'Sparen', isSavingsPlan: true },
+                { patterns: ['consorsbank sparplan'], name: 'Consorsbank Sparplan', interval: 'monthly', category: 'Sparen', isSavingsPlan: true },
+                { patterns: ['flatex sparplan'], name: 'Flatex Sparplan', interval: 'monthly', category: 'Sparen', isSavingsPlan: true },
+                { patterns: ['etf sparplan', 'wertpapiersparplan', 'fondssparplan', 'aktiensparplan'], name: 'Sparplan', interval: 'monthly', category: 'Sparen', isSavingsPlan: true },
+                { patterns: ['depot', 'wertpapier'], name: 'Wertpapier-Sparplan', interval: 'monthly', category: 'Sparen', isSavingsPlan: true, uncertain: true },
+
+                // Software & Cloud
+                { patterns: ['microsoft 365', 'office 365', 'microsoft office'], name: 'Microsoft 365', interval: 'monthly', category: 'Software' },
+                { patterns: ['adobe', 'creative cloud'], name: 'Adobe Creative Cloud', interval: 'monthly', category: 'Software' },
+                { patterns: ['icloud', 'apple.com/bill'], name: 'Apple iCloud', interval: 'monthly', category: 'Software' },
+                { patterns: ['google storage', 'google one'], name: 'Google One', interval: 'monthly', category: 'Software' },
+                { patterns: ['dropbox'], name: 'Dropbox', interval: 'monthly', category: 'Software' },
+
+                // Mobilität
+                { patterns: ['adac'], name: 'ADAC', interval: 'yearly', category: 'Mobilität' },
+                { patterns: ['bahncard', 'bahn card'], name: 'BahnCard', interval: 'yearly', category: 'Mobilität' },
+                { patterns: ['deutschlandticket', 'deutschland-ticket', '49-euro-ticket', '49 euro ticket'], name: 'Deutschlandticket', interval: 'monthly', category: 'Mobilität' },
+                { patterns: ['share now', 'sharenow'], name: 'ShareNow', interval: 'monthly', category: 'Mobilität' },
+
+                // Sonstiges
+                { patterns: ['amazon prime', 'prime membership'], name: 'Amazon Prime', interval: 'yearly', category: 'Shopping' },
+                { patterns: ['paypal *'], name: null, interval: null, category: null }, // PayPal ist kein Vertrag selbst
+            ];
+
+            for (const contract of contractPatterns) {
+                if (contract.patterns.some(p => desc.includes(p))) {
+                    if (contract.name === null) return null; // Explizit kein Vertrag
+                    return {
+                        name: contract.name,
+                        interval: contract.interval,
+                        category: contract.category,
+                        isContract: true,
+                        isSavingsPlan: contract.isSavingsPlan || false,
+                        uncertain: contract.uncertain || false
+                    };
+                }
+            }
+
+            // Zusätzliche Heuristik: Lastschriften sind oft Verträge
+            if (desc.includes('lastschrift') && !desc.includes('paypal')) {
+                // Versuche den Firmennamen zu extrahieren
+                const parts = description.split(/\s+/);
+                // Erster Teil nach "Lastschrift" ist oft der Firmenname
+                const nameIndex = parts.findIndex(p => p.toLowerCase() === 'lastschrift');
+                if (nameIndex >= 0 && nameIndex + 1 < parts.length) {
+                    return {
+                        name: parts.slice(nameIndex + 1, nameIndex + 4).join(' '),
+                        interval: 'monthly', // Annahme
+                        category: null,
+                        isContract: true,
+                        uncertain: true // Markiert als unsicher
+                    };
+                }
+            }
+
+            return null;
         }
 
         // ─── Build chart buckets depending on timeframe ─────────────────────
@@ -344,6 +782,7 @@
             const [expenses, setExpenses] = useState([]);
             const [income, setIncome] = useState([]);
             const [savings, setSavings] = useState([]);
+            const [transactions, setTransactions] = useState([]);
             const [categories, setCategories] = useState(['Lebensmittel', 'Transport', 'Unterhaltung']);
             const [timeframe, setTimeframe] = useState('monthly');
             const [loading, setLoading] = useState(true);
@@ -369,18 +808,20 @@
 
             const loadData = async () => {
                 try {
-                    const [f, e, c, i, s] = await Promise.all([
+                    const [f, e, c, i, s, t] = await Promise.all([
                         storage.get('fixed-costs').catch(() => null),
                         storage.get('expenses').catch(() => null),
                         storage.get('categories').catch(() => null),
                         storage.get('income').catch(() => null),
-                        storage.get('savings').catch(() => null)
+                        storage.get('savings').catch(() => null),
+                        storage.get('transactions').catch(() => null)
                     ]);
                     if (f?.value) setFixedCosts(JSON.parse(f.value));
                     if (e?.value) setExpenses(JSON.parse(e.value));
                     if (c?.value) setCategories(JSON.parse(c.value));
                     if (i?.value) setIncome(JSON.parse(i.value));
                     if (s?.value) setSavings(JSON.parse(s.value));
+                    if (t?.value) setTransactions(JSON.parse(t.value));
                 } catch (err) { console.error(err); }
                 finally { setLoading(false); }
             };
@@ -389,6 +830,12 @@
 
             const crud = (key, list, setList) => ({
                 add: (item) => { const u = [...list, { ...item, id: Date.now() }]; setList(u); save(key, u); },
+                addMany: (items) => {
+                    const newItems = items.map((item, i) => ({ ...item, id: Date.now() + i }));
+                    const u = [...list, ...newItems];
+                    setList(u);
+                    save(key, u);
+                },
                 update: (id, item) => { const u = list.map(i => i.id === id ? { ...item, id } : i); setList(u); save(key, u); },
                 remove: (id) => { const u = list.filter(i => i.id !== id); setList(u); save(key, u); }
             });
@@ -397,6 +844,7 @@
             const fixedCrud = crud('fixed-costs', fixedCosts, setFixedCosts);
             const expenseCrud = crud('expenses', expenses, setExpenses);
             const savingsCrud = crud('savings', savings, setSavings);
+            const transactionsCrud = crud('transactions', transactions, setTransactions);
 
             const addCategory = (cat) => { const u = [...categories, cat]; setCategories(u); save('categories', u); };
 
@@ -407,7 +855,9 @@
                 { key: 'income', label: 'Einkommen', icon: <DollarSign /> },
                 { key: 'fixed', label: 'Fixkosten', icon: <FileText /> },
                 { key: 'expenses', label: 'Ausgaben', icon: <ShoppingCart /> },
-                { key: 'savings', label: 'Sparen', icon: <Piggybank /> }
+                { key: 'savings', label: 'Sparen', icon: <Piggybank /> },
+                { key: 'transactions', label: 'Transaktionen', icon: <ListIcon /> },
+                { key: 'import', label: 'Import', icon: <Upload /> }
             ];
 
             return (
@@ -449,6 +899,8 @@
                         {view === 'fixed'      && <FixedCosts costs={fixedCosts}  {...fixedCrud} triggerAdd={triggerAdd} />}
                         {view === 'expenses'   && <Expenses   expenses={expenses} categories={categories} {...expenseCrud} onAddCategory={addCategory} timeframe={timeframe} setTimeframe={setTimeframe} triggerAdd={triggerAdd} />}
                         {view === 'savings'    && <Savings    savings={savings}   {...savingsCrud} income={income} fixedCosts={fixedCosts} expenses={expenses} triggerAdd={triggerAdd} />}
+                        {view === 'transactions' && <Transactions transactions={transactions} {...transactionsCrud} />}
+                        {view === 'import'     && <Import     expenses={expenses} income={income} categories={categories} addExpenses={expenseCrud.addMany} addFixedCosts={fixedCrud.addMany} addIncomes={incomeCrud.addMany} addSavings={savingsCrud.addMany} addTransactions={transactionsCrud.addMany} onAddCategory={addCategory} />}
                     </main>
                 </div>
             );
@@ -1149,6 +1601,1379 @@
                     </div>
 
                     <button className="fab" onClick={() => setIsAdding(true)}><PlusCircle /> Hinzufügen</button>
+                </div>
+            );
+        }
+
+        // ─── IMPORT ───────────────────────────────────────────────────────────
+        // Erkennt ob eine Transaktion eine Umbuchung ist
+        function isUmbuchung(description) {
+            const desc = description.toLowerCase();
+            const umbuchungPatterns = [
+                'umbuchung',
+                'kapital-konto',
+                'not-konto',
+                'sparen',
+                'einkommensverteiler',
+                'eigene konten',
+                'intern'
+            ];
+            // Prüfe auch ob es eine Überweisung an sich selbst ist
+            const selfTransferPatterns = [
+                'julius oberem', // Name des Kontoinhabers
+            ];
+
+            return umbuchungPatterns.some(p => desc.includes(p)) ||
+                   (desc.includes('überweisung') && selfTransferPatterns.some(p => desc.includes(p))) ||
+                   (desc.includes('echtzeitüberweisung') && selfTransferPatterns.some(p => desc.includes(p)));
+        }
+
+        // ─── TRANSACTIONS PAGE ──────────────────────────────────────────────────
+        function Transactions({ transactions, remove }) {
+            const [filter, setFilter] = useState('all'); // 'all', 'income', 'expense'
+            const [searchTerm, setSearchTerm] = useState('');
+            const [sortBy, setSortBy] = useState('date'); // 'date', 'amount', 'name'
+            const [sortOrder, setSortOrder] = useState('desc');
+
+            const filteredTransactions = React.useMemo(() => {
+                let filtered = [...transactions];
+
+                // Filter by type
+                if (filter === 'income') {
+                    filtered = filtered.filter(t => t.amount > 0);
+                } else if (filter === 'expense') {
+                    filtered = filtered.filter(t => t.amount < 0);
+                }
+
+                // Filter by search term
+                if (searchTerm) {
+                    const term = searchTerm.toLowerCase();
+                    filtered = filtered.filter(t =>
+                        t.description?.toLowerCase().includes(term) ||
+                        t.name?.toLowerCase().includes(term) ||
+                        t.category?.toLowerCase().includes(term)
+                    );
+                }
+
+                // Sort
+                filtered.sort((a, b) => {
+                    let comparison = 0;
+                    if (sortBy === 'date') {
+                        comparison = new Date(a.date || 0) - new Date(b.date || 0);
+                    } else if (sortBy === 'amount') {
+                        comparison = Math.abs(a.amount) - Math.abs(b.amount);
+                    } else if (sortBy === 'name') {
+                        comparison = (a.description || a.name || '').localeCompare(b.description || b.name || '');
+                    }
+                    return sortOrder === 'desc' ? -comparison : comparison;
+                });
+
+                return filtered;
+            }, [transactions, filter, searchTerm, sortBy, sortOrder]);
+
+            const totalIncome = transactions.filter(t => t.amount > 0).reduce((sum, t) => sum + t.amount, 0);
+            const totalExpenses = transactions.filter(t => t.amount < 0).reduce((sum, t) => sum + Math.abs(t.amount), 0);
+
+            return (
+                <div className="space-y-6">
+                    <Card>
+                        <div className="flex items-start gap-3">
+                            <div className="text-blue-600"><ListIcon /></div>
+                            <div>
+                                <h3 className="font-medium text-gray-900">Alle importierten Transaktionen</h3>
+                                <p className="text-sm text-gray-600 mt-1">
+                                    Hier siehst du alle Transaktionen, die aus deinen Kontoauszügen importiert wurden.
+                                </p>
+                            </div>
+                        </div>
+                    </Card>
+
+                    {/* Stats */}
+                    <div className="grid grid-cols-3 gap-4">
+                        <Card>
+                            <div className="text-center">
+                                <div className="text-2xl font-bold text-gray-900">{transactions.length}</div>
+                                <div className="text-sm text-gray-500">Transaktionen</div>
+                            </div>
+                        </Card>
+                        <Card>
+                            <div className="text-center">
+                                <div className="text-2xl font-bold text-green-600">{formatEuro(totalIncome)}</div>
+                                <div className="text-sm text-gray-500">Einnahmen</div>
+                            </div>
+                        </Card>
+                        <Card>
+                            <div className="text-center">
+                                <div className="text-2xl font-bold text-red-600">{formatEuro(totalExpenses)}</div>
+                                <div className="text-sm text-gray-500">Ausgaben</div>
+                            </div>
+                        </Card>
+                    </div>
+
+                    {/* Filters */}
+                    <Card>
+                        <div className="flex flex-col sm:flex-row gap-4">
+                            {/* Search */}
+                            <div className="flex-1">
+                                <input
+                                    type="text"
+                                    placeholder="Suchen..."
+                                    value={searchTerm}
+                                    onChange={(e) => setSearchTerm(e.target.value)}
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                />
+                            </div>
+
+                            {/* Type Filter */}
+                            <div className="flex gap-2">
+                                <button
+                                    onClick={() => setFilter('all')}
+                                    className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                                        filter === 'all' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                                    }`}
+                                >
+                                    Alle
+                                </button>
+                                <button
+                                    onClick={() => setFilter('income')}
+                                    className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                                        filter === 'income' ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                                    }`}
+                                >
+                                    Einnahmen
+                                </button>
+                                <button
+                                    onClick={() => setFilter('expense')}
+                                    className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                                        filter === 'expense' ? 'bg-red-100 text-red-700' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                                    }`}
+                                >
+                                    Ausgaben
+                                </button>
+                            </div>
+
+                            {/* Sort */}
+                            <div className="flex gap-2">
+                                <select
+                                    value={sortBy}
+                                    onChange={(e) => setSortBy(e.target.value)}
+                                    className="px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+                                >
+                                    <option value="date">Datum</option>
+                                    <option value="amount">Betrag</option>
+                                    <option value="name">Name</option>
+                                </select>
+                                <button
+                                    onClick={() => setSortOrder(sortOrder === 'desc' ? 'asc' : 'desc')}
+                                    className="px-3 py-2 bg-gray-100 rounded-lg text-sm text-gray-600 hover:bg-gray-200"
+                                >
+                                    {sortOrder === 'desc' ? '↓' : '↑'}
+                                </button>
+                            </div>
+                        </div>
+                    </Card>
+
+                    {/* Transaction List */}
+                    {filteredTransactions.length > 0 ? (
+                        <Card>
+                            <div className="space-y-2 max-h-[600px] overflow-y-auto">
+                                {filteredTransactions.map((transaction) => (
+                                    <div
+                                        key={transaction.id}
+                                        className="p-4 rounded-lg border border-gray-200 hover:border-gray-300 transition-colors"
+                                    >
+                                        <div className="flex items-center gap-4">
+                                            <div className={`w-10 h-10 rounded-full flex items-center justify-center ${
+                                                transaction.amount > 0 ? 'bg-green-100' : 'bg-red-100'
+                                            }`}>
+                                                {transaction.amount > 0 ? (
+                                                    <TrendingUp className="text-green-600" />
+                                                ) : (
+                                                    <TrendingDown className="text-red-600" />
+                                                )}
+                                            </div>
+                                            <div className="flex-1 min-w-0">
+                                                <div className="flex items-center gap-2 flex-wrap">
+                                                    <span className="text-xs text-gray-500">{transaction.date}</span>
+                                                    {transaction.category && (
+                                                        <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">
+                                                            {transaction.category}
+                                                        </span>
+                                                    )}
+                                                    {transaction.isUmbuchung && (
+                                                        <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">
+                                                            Umbuchung
+                                                        </span>
+                                                    )}
+                                                    {transaction.isContract && (
+                                                        <span className="text-xs px-2 py-0.5 rounded-full bg-purple-100 text-purple-700">
+                                                            Vertrag
+                                                        </span>
+                                                    )}
+                                                    {transaction.isIncome && (
+                                                        <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700">
+                                                            Einkommen
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <div className="font-medium text-gray-900 mt-1 truncate">
+                                                    {transaction.name || transaction.description}
+                                                </div>
+                                                {transaction.description && transaction.name && (
+                                                    <div className="text-xs text-gray-500 mt-1 truncate">
+                                                        {transaction.description}
+                                                    </div>
+                                                )}
+                                            </div>
+                                            <div className="text-right flex items-center gap-3">
+                                                <div className={`font-semibold ${
+                                                    transaction.amount > 0 ? 'text-green-600' : 'text-red-600'
+                                                }`}>
+                                                    {transaction.amount > 0 ? '+' : ''}{formatEuro(transaction.amount)}
+                                                </div>
+                                                <button
+                                                    onClick={() => remove(transaction.id)}
+                                                    className="p-1 text-gray-400 hover:text-red-500 transition-colors"
+                                                    title="Löschen"
+                                                >
+                                                    <Trash2 />
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </Card>
+                    ) : (
+                        <Card>
+                            <div className="text-center py-12 text-gray-500">
+                                <ListIcon className="mx-auto mb-3 text-gray-300" />
+                                <div className="font-medium">Keine Transaktionen vorhanden</div>
+                                <div className="text-sm text-gray-400 mt-1">
+                                    {searchTerm || filter !== 'all'
+                                        ? 'Keine Transaktionen entsprechen deinen Filterkriterien.'
+                                        : 'Importiere einen Kontoauszug, um deine Transaktionen hier zu sehen.'
+                                    }
+                                </div>
+                            </div>
+                        </Card>
+                    )}
+                </div>
+            );
+        }
+
+        function Import({ expenses, income, categories, addExpenses, addFixedCosts, addIncomes, addSavings, addTransactions, onAddCategory }) {
+            const [dragOver, setDragOver] = useState(false);
+            const [parseResult, setParseResult] = useState(null);
+            const [selectedTransactions, setSelectedTransactions] = useState(new Set());
+            const [selectedContracts, setSelectedContracts] = useState(new Set());
+            const [selectedIncomeSources, setSelectedIncomeSources] = useState(new Set());
+            const [selectedSavingsPlans, setSelectedSavingsPlans] = useState(new Set());
+            const [categoryMapping, setCategoryMapping] = useState({});
+            const [importing, setImporting] = useState(false);
+            const [importComplete, setImportComplete] = useState(false);
+            const [parsing, setParsing] = useState(false);
+            const [hideUmbuchungen, setHideUmbuchungen] = useState(true);
+            const [activeTab, setActiveTab] = useState('expenses'); // 'expenses', 'contracts', or 'income'
+            const fileInputRef = useRef(null);
+
+            const handleFile = async (file) => {
+                if (!file) return;
+
+                setParsing(true);
+                setParseResult(null);
+
+                try {
+                    const arrayBuffer = await file.arrayBuffer();
+                    const result = await parseC24PDF(arrayBuffer);
+
+                    // Mark Umbuchungen, detect contracts and income
+                    if (result.transactions) {
+                        result.transactions.forEach(t => {
+                            t.isUmbuchung = isUmbuchung(t.description);
+                            if (t.type === 'expense') {
+                                t.contract = detectContract(t.description);
+                            } else if (t.type === 'income') {
+                                t.incomeSource = detectIncome(t.description, t.amount);
+                            }
+                        });
+
+                        // Extract unique contracts (by name) - separate savings plans from regular contracts
+                        const contractMap = new Map();
+                        const savingsPlanMap = new Map();
+                        result.transactions.forEach((t, idx) => {
+                            if (t.contract && t.type === 'expense' && !t.isUmbuchung) {
+                                const key = t.contract.name;
+                                if (t.contract.isSavingsPlan) {
+                                    // Sparplan -> separate list
+                                    if (!savingsPlanMap.has(key)) {
+                                        savingsPlanMap.set(key, {
+                                            ...t.contract,
+                                            amount: t.amount,
+                                            transactionIdx: idx,
+                                            date: t.date,
+                                            originalDescription: t.description
+                                        });
+                                    }
+                                } else {
+                                    // Regular contract -> fixedCosts
+                                    if (!contractMap.has(key)) {
+                                        contractMap.set(key, {
+                                            ...t.contract,
+                                            amount: t.amount,
+                                            transactionIdx: idx,
+                                            date: t.date,
+                                            originalDescription: t.description
+                                        });
+                                    }
+                                }
+                            }
+                        });
+                        result.contracts = Array.from(contractMap.values());
+                        result.savingsPlans = Array.from(savingsPlanMap.values());
+
+                        // Extract unique income sources (by name)
+                        const incomeMap = new Map();
+                        result.transactions.forEach((t, idx) => {
+                            if (t.incomeSource && t.type === 'income' && !t.isUmbuchung) {
+                                const key = t.incomeSource.name + '_' + t.amount; // Unique by name and amount
+                                if (!incomeMap.has(key)) {
+                                    incomeMap.set(key, {
+                                        ...t.incomeSource,
+                                        amount: t.amount,
+                                        transactionIdx: idx,
+                                        date: t.date,
+                                        originalDescription: t.description
+                                    });
+                                }
+                            }
+                        });
+                        result.incomeSources = Array.from(incomeMap.values());
+                    }
+
+                    setParseResult(result);
+
+                    // Pre-select all non-Umbuchung, non-contract, non-income transactions for expenses
+                    if (result.transactions && result.transactions.length > 0) {
+                        const selected = new Set();
+                        result.transactions.forEach((t, i) => {
+                            if (!t.isUmbuchung && !t.contract && !t.incomeSource && t.type === 'expense') {
+                                selected.add(i);
+                            }
+                        });
+                        setSelectedTransactions(selected);
+
+                        // Pre-select all detected contracts
+                        if (result.contracts) {
+                            setSelectedContracts(new Set(result.contracts.map((_, i) => i)));
+                        }
+
+                        // Pre-select all detected income sources
+                        if (result.incomeSources) {
+                            setSelectedIncomeSources(new Set(result.incomeSources.map((_, i) => i)));
+                        }
+
+                        // Auto-detect categories
+                        const mapping = {};
+                        result.transactions.forEach((t, i) => {
+                            if (!t.category) {
+                                const detected = detectCategory(t.description, categories);
+                                if (detected) {
+                                    mapping[i] = detected;
+                                }
+                            } else {
+                                mapping[i] = t.category;
+                            }
+                        });
+                        setCategoryMapping(mapping);
+                    }
+                } catch (error) {
+                    setParseResult({ error: 'Fehler beim Lesen der PDF: ' + error.message });
+                } finally {
+                    setParsing(false);
+                }
+            };
+
+            const handleDrop = (e) => {
+                e.preventDefault();
+                setDragOver(false);
+                const file = e.dataTransfer.files[0];
+                if (file && (file.name.endsWith('.pdf') || file.type === 'application/pdf')) {
+                    handleFile(file);
+                }
+            };
+
+            const handleFileSelect = (e) => {
+                const file = e.target.files[0];
+                if (file) handleFile(file);
+            };
+
+            const toggleTransaction = (idx) => {
+                const newSelected = new Set(selectedTransactions);
+                if (newSelected.has(idx)) {
+                    newSelected.delete(idx);
+                } else {
+                    newSelected.add(idx);
+                }
+                setSelectedTransactions(newSelected);
+            };
+
+            const selectAll = () => {
+                if (parseResult) {
+                    const selected = new Set();
+                    parseResult.transactions.forEach((t, i) => {
+                        if (!hideUmbuchungen || !t.isUmbuchung) {
+                            selected.add(i);
+                        }
+                    });
+                    setSelectedTransactions(selected);
+                }
+            };
+
+            const selectNone = () => {
+                setSelectedTransactions(new Set());
+            };
+
+            const toggleHideUmbuchungen = () => {
+                const newHide = !hideUmbuchungen;
+                setHideUmbuchungen(newHide);
+
+                // Update selection based on new filter
+                if (newHide && parseResult) {
+                    // Remove Umbuchungen from selection
+                    const newSelected = new Set(selectedTransactions);
+                    parseResult.transactions.forEach((t, i) => {
+                        if (t.isUmbuchung) {
+                            newSelected.delete(i);
+                        }
+                    });
+                    setSelectedTransactions(newSelected);
+                }
+            };
+
+            const updateCategory = (idx, category) => {
+                setCategoryMapping({ ...categoryMapping, [idx]: category });
+            };
+
+            const handleImport = () => {
+                if (!parseResult || selectedExpenses.length === 0) return;
+
+                setImporting(true);
+
+                // Add new categories if needed
+                const newCategories = new Set();
+                selectedExpenses.forEach(idx => {
+                    const cat = categoryMapping[idx];
+                    if (cat && !categories.includes(cat)) {
+                        newCategories.add(cat);
+                    }
+                });
+                newCategories.forEach(cat => onAddCategory(cat));
+
+                // Import only expenses (not income - that should be added manually as recurring)
+                // Collect all expenses to add in one batch
+                const expensesToAdd = [];
+                const transactionsToAdd = [];
+
+                parseResult.transactions.forEach((t, idx) => {
+                    if (!selectedTransactions.has(idx)) return;
+
+                    // Add to transactions list (all selected transactions)
+                    transactionsToAdd.push({
+                        description: t.description,
+                        name: t.name || t.description,
+                        amount: t.type === 'expense' ? -Math.abs(t.amount) : Math.abs(t.amount),
+                        category: categoryMapping[idx] || t.category || 'Sonstiges',
+                        date: t.date,
+                        isUmbuchung: t.isUmbuchung,
+                        isContract: t.isContract,
+                        isIncome: t.isIncome
+                    });
+
+                    // Only add expenses to the expenses list
+                    if (t.type === 'expense') {
+                        expensesToAdd.push({
+                            description: t.description,
+                            amount: t.amount,
+                            category: categoryMapping[idx] || 'Sonstiges',
+                            date: t.date
+                        });
+                    }
+                });
+
+                // Add all expenses at once
+                if (expensesToAdd.length > 0) {
+                    addExpenses(expensesToAdd);
+                }
+
+                // Add all transactions to the transactions list
+                if (transactionsToAdd.length > 0 && addTransactions) {
+                    addTransactions(transactionsToAdd);
+                }
+
+                setImporting(false);
+                setImportComplete(true);
+
+                // Reset after a few seconds
+                setTimeout(() => {
+                    setParseResult(null);
+                    setSelectedTransactions(new Set());
+                    setCategoryMapping({});
+                    setImportComplete(false);
+                    setHideUmbuchungen(true);
+                }, 3000);
+            };
+
+            const selectedExpenses = parseResult ? Array.from(selectedTransactions).filter(i => parseResult.transactions[i]?.type === 'expense') : [];
+            const selectedIncome = parseResult ? Array.from(selectedTransactions).filter(i => parseResult.transactions[i]?.type === 'income') : [];
+
+            return (
+                <div className="space-y-6 pb-24">
+                    <h2 className="text-2xl font-semibold text-gray-900">C24 Import</h2>
+
+                    {/* Info Card */}
+                    <Card>
+                        <div className="flex items-start gap-3">
+                            <div className="text-blue-600"><FileUp /></div>
+                            <div>
+                                <div className="font-medium text-gray-900">Kontoauszug importieren</div>
+                                <div className="text-sm text-gray-600 mt-1">
+                                    Lade deinen PDF-Kontoauszug von C24 hoch. Die Transaktionen werden automatisch erkannt
+                                    und kategorisiert. Du kannst vor dem Import auswählen, welche Transaktionen
+                                    übernommen werden sollen.
+                                </div>
+                            </div>
+                        </div>
+                    </Card>
+
+                    {/* Import Complete Message */}
+                    {importComplete && (
+                        <div className="bg-green-50 border border-green-200 rounded-lg p-4 flex items-center gap-3">
+                            <div className="text-green-600"><Check /></div>
+                            <div className="text-green-800 font-medium">Import erfolgreich abgeschlossen!</div>
+                        </div>
+                    )}
+
+                    {/* Upload Area */}
+                    {!parseResult && !importComplete && !parsing && (
+                        <div
+                            onDrop={handleDrop}
+                            onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+                            onDragLeave={() => setDragOver(false)}
+                            onClick={() => fileInputRef.current?.click()}
+                            className={`border-2 border-dashed rounded-xl p-12 text-center cursor-pointer transition-all ${
+                                dragOver ? 'border-blue-500 bg-blue-50' : 'border-gray-300 hover:border-gray-400 hover:bg-gray-50'
+                            }`}
+                        >
+                            <input
+                                ref={fileInputRef}
+                                type="file"
+                                accept=".pdf"
+                                onChange={handleFileSelect}
+                                className="hidden"
+                            />
+                            <div className="text-gray-400 mb-4"><Upload /></div>
+                            <div className="text-gray-600 font-medium">PDF-Kontoauszug hier ablegen</div>
+                            <div className="text-sm text-gray-500 mt-2">oder klicken zum Auswählen</div>
+                            <div className="text-xs text-gray-400 mt-4">Unterstützt: C24 Bank Kontoauszüge (.pdf)</div>
+                        </div>
+                    )}
+
+                    {/* Loading State */}
+                    {parsing && (
+                        <div className="border-2 border-dashed border-blue-300 bg-blue-50 rounded-xl p-12 text-center">
+                            <div className="animate-pulse">
+                                <div className="text-blue-600 mb-4"><FileUp /></div>
+                                <div className="text-blue-700 font-medium">PDF wird analysiert...</div>
+                                <div className="text-sm text-blue-600 mt-2">Transaktionen werden erkannt</div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Parse Error */}
+                    {parseResult?.error && (
+                        <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                            <div className="flex items-center gap-2 text-red-800 font-medium mb-2">
+                                <AlertCircle />
+                                Fehler beim Lesen der Datei
+                            </div>
+                            <div className="text-sm text-red-700">{parseResult.error}</div>
+                            {parseResult.rawText && (
+                                <details className="mt-3">
+                                    <summary className="text-xs text-red-600 cursor-pointer hover:text-red-800">
+                                        Extrahierter Text anzeigen (für Fehlerbehebung)
+                                    </summary>
+                                    <pre className="mt-2 text-xs text-gray-600 bg-white p-3 rounded border overflow-x-auto max-h-48 overflow-y-auto whitespace-pre-wrap">
+                                        {parseResult.rawText}
+                                    </pre>
+                                </details>
+                            )}
+                            <button
+                                onClick={() => setParseResult(null)}
+                                className="mt-3 text-sm text-red-600 hover:text-red-800 underline"
+                            >
+                                Andere Datei versuchen
+                            </button>
+                        </div>
+                    )}
+
+                    {/* Parse Warnings */}
+                    {parseResult?.errors && parseResult.transactions.length > 0 && (
+                        <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+                            <div className="flex items-center gap-2 text-amber-800 font-medium mb-2">
+                                <AlertCircle />
+                                Einige Zeilen konnten nicht gelesen werden
+                            </div>
+                            <div className="text-sm text-amber-700 max-h-24 overflow-y-auto">
+                                {parseResult.errors.slice(0, 5).map((err, i) => (
+                                    <div key={i}>{err}</div>
+                                ))}
+                                {parseResult.errors.length > 5 && (
+                                    <div>... und {parseResult.errors.length - 5} weitere</div>
+                                )}
+                            </div>
+                        </div>
+                    )}
+
+                    {/* Results */}
+                    {parseResult?.transactions?.length > 0 && !importComplete && (
+                        <>
+                            {/* Stats */}
+                            <div className="grid md:grid-cols-4 gap-4">
+                                <Card>
+                                    <div className="text-sm text-gray-500">Gesamt</div>
+                                    <div className="text-2xl font-semibold text-gray-900">{parseResult.stats.total}</div>
+                                    <div className="text-xs text-gray-400">Transaktionen</div>
+                                </Card>
+                                <Card>
+                                    <div className="text-sm text-gray-500">Einnahmen</div>
+                                    <div className="text-2xl font-semibold text-green-600">{formatEuro(parseResult.stats.totalIncome)}</div>
+                                    <div className="text-xs text-gray-400">{parseResult.stats.income} Transaktionen</div>
+                                </Card>
+                                <Card>
+                                    <div className="text-sm text-gray-500">Ausgaben</div>
+                                    <div className="text-2xl font-semibold text-red-600">{formatEuro(parseResult.stats.totalExpenses)}</div>
+                                    <div className="text-xs text-gray-400">{parseResult.stats.expenses} Transaktionen</div>
+                                </Card>
+                                <Card>
+                                    <div className="text-sm text-gray-500">Verträge erkannt</div>
+                                    <div className="text-2xl font-semibold text-purple-600">{parseResult.contracts?.length || 0}</div>
+                                    <div className="text-xs text-gray-400">Potentielle Fixkosten</div>
+                                </Card>
+                            </div>
+
+                            {/* Tab Navigation */}
+                            <div className="flex gap-2 border-b border-gray-200 overflow-x-auto">
+                                <button
+                                    onClick={() => setActiveTab('expenses')}
+                                    className={`px-4 py-2 font-medium text-sm border-b-2 transition-colors whitespace-nowrap ${
+                                        activeTab === 'expenses'
+                                            ? 'border-blue-600 text-blue-600'
+                                            : 'border-transparent text-gray-500 hover:text-gray-700'
+                                    }`}
+                                >
+                                    Ausgaben
+                                </button>
+                                <button
+                                    onClick={() => setActiveTab('contracts')}
+                                    className={`px-4 py-2 font-medium text-sm border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap ${
+                                        activeTab === 'contracts'
+                                            ? 'border-purple-600 text-purple-600'
+                                            : 'border-transparent text-gray-500 hover:text-gray-700'
+                                    }`}
+                                >
+                                    Verträge / Fixkosten
+                                    {parseResult.contracts?.length > 0 && (
+                                        <span className="bg-purple-100 text-purple-700 text-xs px-2 py-0.5 rounded-full">
+                                            {parseResult.contracts.length}
+                                        </span>
+                                    )}
+                                </button>
+                                <button
+                                    onClick={() => setActiveTab('income')}
+                                    className={`px-4 py-2 font-medium text-sm border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap ${
+                                        activeTab === 'income'
+                                            ? 'border-green-600 text-green-600'
+                                            : 'border-transparent text-gray-500 hover:text-gray-700'
+                                    }`}
+                                >
+                                    Einkommen / Gehalt
+                                    {parseResult.incomeSources?.length > 0 && (
+                                        <span className="bg-green-100 text-green-700 text-xs px-2 py-0.5 rounded-full">
+                                            {parseResult.incomeSources.length}
+                                        </span>
+                                    )}
+                                </button>
+                                <button
+                                    onClick={() => setActiveTab('savings')}
+                                    className={`px-4 py-2 font-medium text-sm border-b-2 transition-colors flex items-center gap-2 whitespace-nowrap ${
+                                        activeTab === 'savings'
+                                            ? 'border-emerald-600 text-emerald-600'
+                                            : 'border-transparent text-gray-500 hover:text-gray-700'
+                                    }`}
+                                >
+                                    Sparpläne
+                                    {parseResult.savingsPlans?.length > 0 && (
+                                        <span className="bg-emerald-100 text-emerald-700 text-xs px-2 py-0.5 rounded-full">
+                                            {parseResult.savingsPlans.length}
+                                        </span>
+                                    )}
+                                </button>
+                            </div>
+
+                            {/* EXPENSES TAB */}
+                            {activeTab === 'expenses' && (
+                                <>
+                                    {/* Filter & Selection Controls */}
+                                    <Card>
+                                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                                            <label className="flex items-center gap-2 cursor-pointer">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={hideUmbuchungen}
+                                                    onChange={toggleHideUmbuchungen}
+                                                    className="w-4 h-4 text-blue-600 rounded"
+                                                />
+                                                <span className="text-sm text-gray-700">Umbuchungen ausblenden</span>
+                                                <span className="text-xs text-gray-400">
+                                                    ({parseResult.transactions.filter(t => t.isUmbuchung).length} gefunden)
+                                                </span>
+                                            </label>
+                                            <div className="flex items-center gap-4">
+                                                <div className="text-sm text-gray-600">
+                                                    {selectedTransactions.size} von {hideUmbuchungen
+                                                        ? parseResult.transactions.filter(t => !t.isUmbuchung && !t.contract).length
+                                                        : parseResult.transactions.filter(t => !t.contract).length} ausgewählt
+                                                </div>
+                                                <div className="flex gap-2">
+                                                    <button onClick={selectAll} className="text-sm text-blue-600 hover:text-blue-800">Alle</button>
+                                                    <span className="text-gray-300">|</span>
+                                                    <button onClick={selectNone} className="text-sm text-gray-600 hover:text-gray-800">Keine</button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </Card>
+
+                                    {/* Transaction List */}
+                                    <Card>
+                                        <CardTitle icon={<Receipt />}>Transaktionen (ohne Verträge)</CardTitle>
+                                        <div className="mt-4 max-h-96 overflow-y-auto space-y-2">
+                                            {parseResult.transactions.map((t, idx) => {
+                                                // Hide Umbuchungen if filter is active
+                                                if (hideUmbuchungen && t.isUmbuchung) return null;
+                                                // Hide contracts in expenses tab
+                                                if (t.contract) return null;
+
+                                                return (
+                                                    <div
+                                                        key={idx}
+                                                        onClick={() => toggleTransaction(idx)}
+                                                        className={`p-3 rounded-lg border cursor-pointer transition-all ${
+                                                            selectedTransactions.has(idx)
+                                                                ? 'border-blue-300 bg-blue-50'
+                                                                : 'border-gray-100 bg-gray-50 opacity-60'
+                                                        } ${t.isUmbuchung ? 'border-l-4 border-l-amber-400' : ''}`}
+                                                    >
+                                                        <div className="flex items-start gap-3">
+                                                            <input
+                                                                type="checkbox"
+                                                                checked={selectedTransactions.has(idx)}
+                                                                onChange={() => toggleTransaction(idx)}
+                                                                onClick={(e) => e.stopPropagation()}
+                                                                className="mt-1"
+                                                            />
+                                                            <div className="flex-1 min-w-0">
+                                                                <div className="flex items-center gap-2 flex-wrap">
+                                                                    <span className={`text-xs px-2 py-0.5 rounded-full ${
+                                                                        t.type === 'income' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                                                                    }`}>
+                                                                        {t.type === 'income' ? 'Einnahme' : 'Ausgabe'}
+                                                                    </span>
+                                                                    {t.isUmbuchung && (
+                                                                        <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">
+                                                                            Umbuchung
+                                                                        </span>
+                                                                    )}
+                                                                    <span className="text-xs text-gray-500">{formatDate(t.date)}</span>
+                                                                </div>
+                                                                <div className="font-medium text-gray-900 mt-1 truncate">{t.description}</div>
+                                                                {t.type === 'expense' && selectedTransactions.has(idx) && (
+                                                                    <div className="mt-2 flex items-center gap-2">
+                                                                        <span className="text-xs text-gray-500">Kategorie:</span>
+                                                                        <select
+                                                                            value={categoryMapping[idx] || ''}
+                                                                            onChange={(e) => { e.stopPropagation(); updateCategory(idx, e.target.value); }}
+                                                                            onClick={(e) => e.stopPropagation()}
+                                                                            className="text-xs px-2 py-1 border border-gray-200 rounded"
+                                                                        >
+                                                                            <option value="">Auswählen...</option>
+                                                                            {categories.map(cat => (
+                                                                                <option key={cat} value={cat}>{cat}</option>
+                                                                            ))}
+                                                                            <option value="Sonstiges">Sonstiges</option>
+                                                                        </select>
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                            <div className={`font-semibold ${t.type === 'income' ? 'text-green-600' : 'text-red-600'}`}>
+                                                                {t.type === 'income' ? '+' : '-'}{formatEuro(t.amount)}
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    </Card>
+                                </>
+                            )}
+
+                            {/* CONTRACTS TAB */}
+                            {activeTab === 'contracts' && (
+                                <>
+                                    <Card>
+                                        <div className="flex items-start gap-3">
+                                            <div className="text-purple-600"><FileText /></div>
+                                            <div>
+                                                <div className="font-medium text-gray-900">Erkannte Verträge & Abos</div>
+                                                <div className="text-sm text-gray-600 mt-1">
+                                                    Diese Transaktionen wurden als wiederkehrende Zahlungen erkannt.
+                                                    Du kannst sie als Fixkosten importieren, um sie in der Analyse zu berücksichtigen.
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </Card>
+
+                                    {parseResult.contracts?.length > 0 ? (
+                                        <>
+                                            <div className="flex items-center justify-between">
+                                                <div className="text-sm text-gray-600">
+                                                    {selectedContracts.size} von {parseResult.contracts.length} ausgewählt
+                                                </div>
+                                                <div className="flex gap-2">
+                                                    <button
+                                                        onClick={() => setSelectedContracts(new Set(parseResult.contracts.map((_, i) => i)))}
+                                                        className="text-sm text-purple-600 hover:text-purple-800"
+                                                    >Alle</button>
+                                                    <span className="text-gray-300">|</span>
+                                                    <button
+                                                        onClick={() => setSelectedContracts(new Set())}
+                                                        className="text-sm text-gray-600 hover:text-gray-800"
+                                                    >Keine</button>
+                                                </div>
+                                            </div>
+
+                                            <Card>
+                                                <CardTitle icon={<FileText />}>Verträge</CardTitle>
+                                                <div className="mt-4 space-y-2">
+                                                    {parseResult.contracts.map((contract, idx) => (
+                                                        <div
+                                                            key={idx}
+                                                            onClick={() => {
+                                                                const newSelected = new Set(selectedContracts);
+                                                                if (newSelected.has(idx)) {
+                                                                    newSelected.delete(idx);
+                                                                } else {
+                                                                    newSelected.add(idx);
+                                                                }
+                                                                setSelectedContracts(newSelected);
+                                                            }}
+                                                            className={`p-4 rounded-lg border cursor-pointer transition-all ${
+                                                                selectedContracts.has(idx)
+                                                                    ? 'border-purple-300 bg-purple-50'
+                                                                    : 'border-gray-100 bg-gray-50 opacity-60'
+                                                            }`}
+                                                        >
+                                                            <div className="flex items-start gap-3">
+                                                                <input
+                                                                    type="checkbox"
+                                                                    checked={selectedContracts.has(idx)}
+                                                                    onChange={() => {}}
+                                                                    onClick={(e) => e.stopPropagation()}
+                                                                    className="mt-1"
+                                                                />
+                                                                <div className="flex-1">
+                                                                    <div className="flex items-center gap-2 flex-wrap">
+                                                                        <span className="text-xs px-2 py-0.5 rounded-full bg-purple-100 text-purple-700">
+                                                                            {contract.interval === 'monthly' ? 'Monatlich' :
+                                                                             contract.interval === 'yearly' ? 'Jährlich' :
+                                                                             contract.interval === 'quarterly' ? 'Quartalsweise' : contract.interval}
+                                                                        </span>
+                                                                        {contract.category && (
+                                                                            <span className="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600">
+                                                                                {contract.category}
+                                                                            </span>
+                                                                        )}
+                                                                        {contract.uncertain && (
+                                                                            <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">
+                                                                                Unsicher
+                                                                            </span>
+                                                                        )}
+                                                                    </div>
+                                                                    <div className="font-medium text-gray-900 mt-1">{contract.name}</div>
+                                                                    <div className="text-xs text-gray-500 mt-1 truncate">
+                                                                        {contract.originalDescription}
+                                                                    </div>
+                                                                </div>
+                                                                <div className="text-right">
+                                                                    <div className="font-semibold text-purple-600">{formatEuro(contract.amount)}</div>
+                                                                    <div className="text-xs text-gray-500">
+                                                                        {contract.interval === 'monthly' ? '/Monat' :
+                                                                         contract.interval === 'yearly' ? '/Jahr' :
+                                                                         contract.interval === 'quarterly' ? '/Quartal' : ''}
+                                                                    </div>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </Card>
+
+                                            {/* Contract Import Button */}
+                                            <Card>
+                                                <div className="flex items-center justify-between">
+                                                    <div>
+                                                        <div className="font-medium text-gray-900">Als Fixkosten importieren:</div>
+                                                        <div className="text-sm text-gray-600 mt-1">
+                                                            {selectedContracts.size} Verträge ausgewählt
+                                                        </div>
+                                                    </div>
+                                                    <button
+                                                        onClick={() => {
+                                                            if (selectedContracts.size === 0) return;
+                                                            const contractsToAdd = Array.from(selectedContracts).map(idx => {
+                                                                const c = parseResult.contracts[idx];
+                                                                return {
+                                                                    name: c.name,
+                                                                    amount: c.amount,
+                                                                    interval: c.interval
+                                                                };
+                                                            });
+                                                            // Also add to transactions list
+                                                            const transactionsToAdd = Array.from(selectedContracts).map(idx => {
+                                                                const c = parseResult.contracts[idx];
+                                                                return {
+                                                                    description: c.originalDescription,
+                                                                    name: c.name,
+                                                                    amount: -Math.abs(c.amount),
+                                                                    category: c.category || 'Vertrag',
+                                                                    date: c.date,
+                                                                    isContract: true
+                                                                };
+                                                            });
+                                                            addFixedCosts(contractsToAdd);
+                                                            if (addTransactions) addTransactions(transactionsToAdd);
+                                                            setSelectedContracts(new Set());
+                                                            // Remove imported contracts from list
+                                                            const importedIndices = Array.from(selectedContracts);
+                                                            const remainingContracts = parseResult.contracts.filter((_, i) => !importedIndices.includes(i));
+                                                            setParseResult({ ...parseResult, contracts: remainingContracts });
+                                                        }}
+                                                        disabled={selectedContracts.size === 0}
+                                                        className={`px-6 py-2 rounded-lg font-medium transition-colors flex items-center gap-2 ${
+                                                            selectedContracts.size > 0
+                                                                ? 'bg-purple-600 text-white hover:bg-purple-700'
+                                                                : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                                                        }`}
+                                                    >
+                                                        <Download /> Als Fixkosten speichern
+                                                    </button>
+                                                </div>
+                                            </Card>
+                                        </>
+                                    ) : (
+                                        <Card>
+                                            <div className="text-center py-8 text-gray-500">
+                                                <FileText className="mx-auto mb-3 text-gray-300" />
+                                                <div>Keine Verträge erkannt</div>
+                                                <div className="text-sm text-gray-400 mt-1">
+                                                    Es wurden keine wiederkehrenden Zahlungen in diesem Kontoauszug gefunden.
+                                                </div>
+                                            </div>
+                                        </Card>
+                                    )}
+                                </>
+                            )}
+
+                            {/* INCOME TAB */}
+                            {activeTab === 'income' && (
+                                <>
+                                    <Card>
+                                        <div className="flex items-start gap-3">
+                                            <div className="text-green-600"><TrendingUp /></div>
+                                            <div>
+                                                <h3 className="font-medium text-gray-900">Einkommen erkannt</h3>
+                                                <p className="text-sm text-gray-600 mt-1">
+                                                    Folgende Einkommensquellen wurden im Kontoauszug erkannt (Gehalt, Rente, Kindergeld, etc.).
+                                                    Wähle aus, welche du als wiederkehrendes Einkommen speichern möchtest.
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </Card>
+
+                                    {parseResult.incomeSources?.length > 0 ? (
+                                        <>
+                                            {/* Selection Controls */}
+                                            <Card>
+                                                <div className="flex items-center gap-4">
+                                                    <button
+                                                        onClick={() => {
+                                                            if (selectedIncomeSources.size === parseResult.incomeSources.length) {
+                                                                setSelectedIncomeSources(new Set());
+                                                            } else {
+                                                                setSelectedIncomeSources(new Set(parseResult.incomeSources.map((_, i) => i)));
+                                                            }
+                                                        }}
+                                                        className="text-sm text-green-600 hover:text-green-700"
+                                                    >
+                                                        {selectedIncomeSources.size === parseResult.incomeSources.length ? 'Alle abwählen' : 'Alle auswählen'}
+                                                    </button>
+                                                    <span className="text-sm text-gray-500">
+                                                        {selectedIncomeSources.size} von {parseResult.incomeSources.length} ausgewählt
+                                                    </span>
+                                                </div>
+                                            </Card>
+
+                                            {/* Income Sources List */}
+                                            <Card>
+                                                <div className="space-y-2 max-h-96 overflow-y-auto">
+                                                    {parseResult.incomeSources.map((income, idx) => (
+                                                        <div
+                                                            key={idx}
+                                                            onClick={() => {
+                                                                const newSet = new Set(selectedIncomeSources);
+                                                                if (newSet.has(idx)) {
+                                                                    newSet.delete(idx);
+                                                                } else {
+                                                                    newSet.add(idx);
+                                                                }
+                                                                setSelectedIncomeSources(newSet);
+                                                            }}
+                                                            className={`p-4 rounded-lg cursor-pointer transition-all border-2 ${
+                                                                selectedIncomeSources.has(idx)
+                                                                    ? 'border-green-500 bg-green-50'
+                                                                    : 'border-gray-200 hover:border-gray-300'
+                                                            }`}
+                                                        >
+                                                            <div className="flex items-center gap-4">
+                                                                <input
+                                                                    type="checkbox"
+                                                                    checked={selectedIncomeSources.has(idx)}
+                                                                    onChange={() => {}}
+                                                                    className="w-5 h-5 text-green-600 rounded"
+                                                                />
+                                                                <div className="flex-1 min-w-0">
+                                                                    <div className="flex items-center gap-2 flex-wrap">
+                                                                        <span className="text-xs px-2 py-0.5 rounded-full bg-green-100 text-green-700">
+                                                                            {income.type === 'salary' ? 'Gehalt' :
+                                                                             income.type === 'pension' ? 'Rente' :
+                                                                             income.type === 'benefits' ? 'Sozialleistung' :
+                                                                             income.type === 'rental' ? 'Mieteinnahme' :
+                                                                             income.type === 'investment' ? 'Kapitalertrag' : 'Einkommen'}
+                                                                        </span>
+                                                                        <span className="text-xs text-gray-500">{income.date}</span>
+                                                                    </div>
+                                                                    <div className="font-medium text-gray-900 mt-1">{income.name}</div>
+                                                                    <div className="text-xs text-gray-500 mt-1 truncate">
+                                                                        {income.originalDescription}
+                                                                    </div>
+                                                                </div>
+                                                                <div className="text-right">
+                                                                    <div className="font-semibold text-green-600">{formatEuro(income.amount)}</div>
+                                                                    <div className="text-xs text-gray-500">/Monat</div>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </Card>
+
+                                            {/* Income Import Button */}
+                                            <Card>
+                                                <div className="flex items-center justify-between">
+                                                    <div>
+                                                        <div className="font-medium text-gray-900">Als Einkommen speichern:</div>
+                                                        <div className="text-sm text-gray-600 mt-1">
+                                                            {selectedIncomeSources.size} Einkommensquelle(n) ausgewählt
+                                                        </div>
+                                                    </div>
+                                                    <button
+                                                        onClick={() => {
+                                                            if (selectedIncomeSources.size === 0) return;
+                                                            const incomesToAdd = Array.from(selectedIncomeSources).map(idx => {
+                                                                const inc = parseResult.incomeSources[idx];
+                                                                return {
+                                                                    name: inc.name,
+                                                                    amount: inc.amount,
+                                                                    interval: 'monthly'
+                                                                };
+                                                            });
+                                                            // Also add to transactions list
+                                                            const transactionsToAdd = Array.from(selectedIncomeSources).map(idx => {
+                                                                const inc = parseResult.incomeSources[idx];
+                                                                return {
+                                                                    description: inc.originalDescription,
+                                                                    name: inc.name,
+                                                                    amount: Math.abs(inc.amount),
+                                                                    category: inc.type === 'salary' ? 'Gehalt' : 'Einkommen',
+                                                                    date: inc.date,
+                                                                    isIncome: true
+                                                                };
+                                                            });
+                                                            addIncomes(incomesToAdd);
+                                                            if (addTransactions) addTransactions(transactionsToAdd);
+                                                            setSelectedIncomeSources(new Set());
+                                                            // Remove imported income sources from list
+                                                            const importedIndices = Array.from(selectedIncomeSources);
+                                                            const remainingIncomes = parseResult.incomeSources.filter((_, i) => !importedIndices.includes(i));
+                                                            setParseResult({ ...parseResult, incomeSources: remainingIncomes });
+                                                        }}
+                                                        disabled={selectedIncomeSources.size === 0}
+                                                        className={`px-6 py-2 rounded-lg font-medium transition-colors flex items-center gap-2 ${
+                                                            selectedIncomeSources.size > 0
+                                                                ? 'bg-green-600 text-white hover:bg-green-700'
+                                                                : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                                                        }`}
+                                                    >
+                                                        <Download /> Als Einkommen speichern
+                                                    </button>
+                                                </div>
+                                            </Card>
+                                        </>
+                                    ) : (
+                                        <Card>
+                                            <div className="text-center py-8 text-gray-500">
+                                                <TrendingUp className="mx-auto mb-3 text-gray-300" />
+                                                <div>Kein Einkommen erkannt</div>
+                                                <div className="text-sm text-gray-400 mt-1">
+                                                    Es wurden keine Gehaltseingänge oder andere Einkommensquellen in diesem Kontoauszug gefunden.
+                                                </div>
+                                            </div>
+                                        </Card>
+                                    )}
+                                </>
+                            )}
+
+                            {/* SAVINGS PLANS TAB */}
+                            {activeTab === 'savings' && (
+                                <>
+                                    <Card>
+                                        <div className="flex items-start gap-3">
+                                            <div className="text-emerald-600"><Piggybank /></div>
+                                            <div>
+                                                <h3 className="font-medium text-gray-900">Sparpläne erkannt</h3>
+                                                <p className="text-sm text-gray-600 mt-1">
+                                                    Folgende Sparpläne wurden im Kontoauszug erkannt (ETF-Sparpläne, Wertpapiersparpläne, etc.).
+                                                    Wähle aus, welche du als Sparrate speichern möchtest.
+                                                </p>
+                                            </div>
+                                        </div>
+                                    </Card>
+
+                                    {parseResult.savingsPlans?.length > 0 ? (
+                                        <>
+                                            {/* Selection Controls */}
+                                            <Card>
+                                                <div className="flex items-center gap-4">
+                                                    <button
+                                                        onClick={() => {
+                                                            if (selectedSavingsPlans.size === parseResult.savingsPlans.length) {
+                                                                setSelectedSavingsPlans(new Set());
+                                                            } else {
+                                                                setSelectedSavingsPlans(new Set(parseResult.savingsPlans.map((_, i) => i)));
+                                                            }
+                                                        }}
+                                                        className="text-sm text-emerald-600 hover:text-emerald-700"
+                                                    >
+                                                        {selectedSavingsPlans.size === parseResult.savingsPlans.length ? 'Alle abwählen' : 'Alle auswählen'}
+                                                    </button>
+                                                    <span className="text-sm text-gray-500">
+                                                        {selectedSavingsPlans.size} von {parseResult.savingsPlans.length} ausgewählt
+                                                    </span>
+                                                </div>
+                                            </Card>
+
+                                            {/* Savings Plans List */}
+                                            <Card>
+                                                <div className="space-y-2 max-h-96 overflow-y-auto">
+                                                    {parseResult.savingsPlans.map((plan, idx) => (
+                                                        <div
+                                                            key={idx}
+                                                            onClick={() => {
+                                                                const newSet = new Set(selectedSavingsPlans);
+                                                                if (newSet.has(idx)) {
+                                                                    newSet.delete(idx);
+                                                                } else {
+                                                                    newSet.add(idx);
+                                                                }
+                                                                setSelectedSavingsPlans(newSet);
+                                                            }}
+                                                            className={`p-4 rounded-lg cursor-pointer transition-all border-2 ${
+                                                                selectedSavingsPlans.has(idx)
+                                                                    ? 'border-emerald-500 bg-emerald-50'
+                                                                    : 'border-gray-200 hover:border-gray-300'
+                                                            }`}
+                                                        >
+                                                            <div className="flex items-center gap-4">
+                                                                <input
+                                                                    type="checkbox"
+                                                                    checked={selectedSavingsPlans.has(idx)}
+                                                                    onChange={() => {}}
+                                                                    className="w-5 h-5 text-emerald-600 rounded"
+                                                                />
+                                                                <div className="flex-1 min-w-0">
+                                                                    <div className="flex items-center gap-2 flex-wrap">
+                                                                        <span className="text-xs px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">
+                                                                            Sparplan
+                                                                        </span>
+                                                                        <span className="text-xs text-gray-500">{plan.date}</span>
+                                                                        {plan.uncertain && (
+                                                                            <span className="text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700">
+                                                                                Unsicher
+                                                                            </span>
+                                                                        )}
+                                                                    </div>
+                                                                    <div className="font-medium text-gray-900 mt-1">{plan.name}</div>
+                                                                    <div className="text-xs text-gray-500 mt-1 truncate">
+                                                                        {plan.originalDescription}
+                                                                    </div>
+                                                                </div>
+                                                                <div className="text-right">
+                                                                    <div className="font-semibold text-emerald-600">{formatEuro(plan.amount)}</div>
+                                                                    <div className="text-xs text-gray-500">/Monat</div>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </Card>
+
+                                            {/* Savings Plan Import Button */}
+                                            <Card>
+                                                <div className="flex items-center justify-between">
+                                                    <div>
+                                                        <div className="font-medium text-gray-900">Als Sparrate speichern:</div>
+                                                        <div className="text-sm text-gray-600 mt-1">
+                                                            {selectedSavingsPlans.size} Sparplan/-pläne ausgewählt
+                                                        </div>
+                                                    </div>
+                                                    <button
+                                                        onClick={() => {
+                                                            if (selectedSavingsPlans.size === 0) return;
+                                                            const savingsToAdd = Array.from(selectedSavingsPlans).map(idx => {
+                                                                const plan = parseResult.savingsPlans[idx];
+                                                                return {
+                                                                    name: plan.name,
+                                                                    amount: plan.amount,
+                                                                    type: 'recurring',
+                                                                    interval: plan.interval || 'monthly'
+                                                                };
+                                                            });
+                                                            // Also add to transactions list
+                                                            const transactionsToAdd = Array.from(selectedSavingsPlans).map(idx => {
+                                                                const plan = parseResult.savingsPlans[idx];
+                                                                return {
+                                                                    description: plan.originalDescription,
+                                                                    name: plan.name,
+                                                                    amount: -Math.abs(plan.amount),
+                                                                    category: 'Sparen',
+                                                                    date: plan.date,
+                                                                    isSavingsPlan: true
+                                                                };
+                                                            });
+                                                            addSavings(savingsToAdd);
+                                                            if (addTransactions) addTransactions(transactionsToAdd);
+                                                            setSelectedSavingsPlans(new Set());
+                                                            // Remove imported savings plans from list
+                                                            const importedIndices = Array.from(selectedSavingsPlans);
+                                                            const remainingPlans = parseResult.savingsPlans.filter((_, i) => !importedIndices.includes(i));
+                                                            setParseResult({ ...parseResult, savingsPlans: remainingPlans });
+                                                        }}
+                                                        disabled={selectedSavingsPlans.size === 0}
+                                                        className={`px-6 py-2 rounded-lg font-medium transition-colors flex items-center gap-2 ${
+                                                            selectedSavingsPlans.size > 0
+                                                                ? 'bg-emerald-600 text-white hover:bg-emerald-700'
+                                                                : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                                                        }`}
+                                                    >
+                                                        <Download /> Als Sparrate speichern
+                                                    </button>
+                                                </div>
+                                            </Card>
+                                        </>
+                                    ) : (
+                                        <Card>
+                                            <div className="text-center py-8 text-gray-500">
+                                                <Piggybank className="mx-auto mb-3 text-gray-300" />
+                                                <div>Keine Sparpläne erkannt</div>
+                                                <div className="text-sm text-gray-400 mt-1">
+                                                    Es wurden keine Sparpläne oder ETF-Investitionen in diesem Kontoauszug gefunden.
+                                                </div>
+                                            </div>
+                                        </Card>
+                                    )}
+                                </>
+                            )}
+
+                            {/* Import Summary & Button - Only show in expenses tab */}
+                            {activeTab === 'expenses' && (
+                                <Card>
+                                    <div className="space-y-4">
+                                        <div>
+                                            <div className="font-medium text-gray-900">Ausgewählt zum Import:</div>
+                                            <div className="text-sm text-gray-600 mt-1">
+                                                <span className="text-red-600 font-medium">{selectedExpenses.length} Ausgaben</span>
+                                                {' '}({formatEuro(selectedExpenses.reduce((s, i) => s + parseResult.transactions[i].amount, 0))})
+                                            </div>
+                                            <div className="text-xs text-gray-500 mt-2">
+                                                Ausgaben werden zur Analyse hinzugefügt. Verträge kannst du im Tab "Verträge / Fixkosten" als Fixkosten importieren.
+                                            </div>
+                                        </div>
+                                        <div className="flex justify-end gap-2">
+                                            <button
+                                                onClick={() => { setParseResult(null); setSelectedTransactions(new Set()); setCategoryMapping({}); setSelectedContracts(new Set()); }}
+                                                className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                                            >
+                                                Abbrechen
+                                            </button>
+                                            <button
+                                                onClick={handleImport}
+                                                disabled={selectedExpenses.length === 0 || importing}
+                                                className={`px-6 py-2 rounded-lg font-medium transition-colors flex items-center gap-2 ${
+                                                    selectedExpenses.length > 0 && !importing
+                                                        ? 'bg-blue-600 text-white hover:bg-blue-700'
+                                                        : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                                                }`}
+                                            >
+                                                {importing ? (
+                                                    <>Importiere...</>
+                                                ) : (
+                                                    <><Download /> {selectedExpenses.length} Ausgaben importieren</>
+                                                )}
+                                            </button>
+                                        </div>
+                                    </div>
+                                </Card>
+                            )}
+                        </>
+                    )}
+
+                    {/* Help Section */}
+                    <Card>
+                        <CardTitle>So exportierst du bei C24:</CardTitle>
+                        <ol className="mt-3 text-sm text-gray-600 space-y-2 list-decimal list-inside">
+                            <li>Öffne die C24 Bank App oder das Online-Banking</li>
+                            <li>Gehe zu deinem Girokonto → Kontoauszüge</li>
+                            <li>Wähle den gewünschten Kontoauszug (Monat)</li>
+                            <li>Lade den Kontoauszug als PDF herunter</li>
+                            <li>Lade die PDF-Datei hier hoch</li>
+                        </ol>
+                        <div className="mt-4 p-3 bg-blue-50 rounded-lg">
+                            <div className="text-sm text-blue-800">
+                                <strong>Tipp:</strong> Die App erkennt automatisch Einnahmen und Ausgaben aus dem PDF
+                                und kategorisiert bekannte Händler wie REWE, Amazon, etc.
+                            </div>
+                        </div>
+                    </Card>
                 </div>
             );
         }
